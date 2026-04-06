@@ -18,7 +18,7 @@ const io = new Server(server, {
 
 // INICIALIZACIÓN DEL CEREBRO (Gemini 1.5 Flash)
 // La llave se toma de las Variables de Entorno de Render por seguridad
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // LÓGICA DEL CANAL ENCRIPTADO
