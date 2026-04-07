@@ -1,12 +1,29 @@
-{
-  "name": "drivery-brain",
+"{
+  "name": "drivery-backend",
   "version": "1.0.0",
+  "description": "Núcleo de Inteligencia Artificial y Logística - Drivery OS",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "drivery",
+    "ai",
+    "logistics",
+    "caracas",
+    "gemini"
+  ],
+  "author": "Jarnor Arley Larrotta",
+  "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.1.0",
-    "express": "^4.18.2",
-    "socket.io": "^4.7.2",
-    "dotenv": "^16.3.1"
+    "@google/generative-ai": "^0.11.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }

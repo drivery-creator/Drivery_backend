@@ -1,2 +1,11 @@
-node_modules
+# Seguridad: Nunca subir las llaves maestras
 .env
+
+# Dependencias: No subas la carpeta pesada de librerías
+node_modules/
+
+# Logs y archivos temporales
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
