@@ -30,7 +30,6 @@ app.post("/api/command", async (req, res) => {
     try {
         const { command } = req.body;
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
         const systemPrompt = `Eres Drivery Core AI. Gestionas logística en Caracas.
         Responde SIEMPRE en JSON puro. 
         Si el usuario pide ver una zona, usa estas coordenadas: ${JSON.stringify(caracasNodes)}.
