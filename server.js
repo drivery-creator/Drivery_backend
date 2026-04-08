@@ -14,7 +14,6 @@ app.use(express.json());
 
 // 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL (GEMINI)
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-
 // Base de datos táctica para que la IA no cometa errores de geolocalización
 const caracasNodes = {
     "las mercedes": { lat: 10.4847, lng: -66.8611, zoom: 16 },
@@ -29,7 +28,9 @@ const caracasNodes = {
 app.post("/api/command", async (req, res) => {
     try {
         const { command } = req.body;
-        const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+        const model = genAI.getGenerativeModel({ 
+    model: "gemini-3.1-flash",
+    apiVersion: "v1"
         const systemPrompt = `Eres Drivery Core AI. Gestionas logística en Caracas.
         Responde SIEMPRE en JSON puro. 
         Si el usuario pide ver una zona, usa estas coordenadas: ${JSON.stringify(caracasNodes)}.
