@@ -7,44 +7,43 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configuración de Google AI (Gemini 3.1 Flash)
+// Inicialización del motor de IA
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
-const systemPrompt = `Eres Drivery Core AI, el cerebro de una Super App de servicios en Caracas, Venezuela. 
-Tu especialidad es la logística y tecnología de punta. 
-Si el usuario menciona un lugar de Caracas, responde con las coordenadas aproximadas en formato JSON: {"coords": {"lat": 10.48, "lng": -66.89}, "reply": "Tu mensaje"}.
-Mantén un tono profesional, tecnológico y eficiente.`;
+const systemPrompt = `Eres Drivery Core AI. Gestionas logística en Caracas.
+Si el usuario menciona un lugar, responde con JSON: {"coords": {"lat": 10.48, "lng": -66.89}, "reply": "Tu mensaje"}.`;
 
 app.post('/api/command', async (req, res) => {
     try {
         const { command } = req.body;
         
-        // Usamos el modelo estable gemini-1.5-flash (compatible con Gemini 3.1)
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
-            apiVersion: "v1" 
-        });
+        // CORRECCIÓN CRÍTICA: Forzamos apiVersion 'v1' para evitar el error 404 de la ruta v1beta
+        const model = genAI.getGenerativeModel(
+            { model: "gemini-1.5-flash" },
+            { apiVersion: 'v1' }
+        );
 
         const prompt = `${systemPrompt}\n\nUsuario: ${command}`;
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const text = response.text();
 
-        // Intentar parsear JSON si la IA envió coordenadas
         try {
-            const jsonResponse = JSON.parse(text);
+            // Intentamos limpiar la respuesta por si la IA añade bloques de código Markdown
+            const cleanText = text.replace(/```json|```/g, '').trim();
+            const jsonResponse = JSON.parse(cleanText);
             res.json(jsonResponse);
         } catch (e) {
             res.json({ reply: text });
         }
     } catch (error) {
-        console.error("Error en el Core:", error);
-        res.status(500).json({ error: "Error interno del servidor", details: error.message });
+        console.error("Error en Core IA:", error);
+        res.status(500).json({ error: "Error en el servidor", details: error.message });
     }
 });
 
-// Puerto dinámico para Render
+// BINDING DE PUERTO: Fundamental para Render
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Drivery OS Backend operativo en puerto ${PORT}`);
+    console.log(`Terminal Drivery OS conectada en puerto ${PORT}`);
 });
