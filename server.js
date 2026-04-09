@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const Groq = require('groq-sdk');
+const { ejecutarDespacho } = require('./automator.js');
 require('dotenv').config();
 
 const app = express();
