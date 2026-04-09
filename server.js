@@ -1,49 +1,42 @@
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// INICIALIZACIÓN: Captura la llave de las variables de entorno de Render
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Inicialización de Groq con tu nueva llave
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-const systemPrompt = `Eres Drivery Core AI. Gestionas logística en Caracas.
-Si el usuario menciona un lugar, responde siempre con este formato JSON: {"coords": {"lat": 10.48, "lng": -66.89}, "reply": "Tu mensaje"}.`;
+const systemPrompt = `Eres Drivery Core AI, el cerebro logístico de Caracas. 
+Responde siempre con un objeto JSON válido que contenga "coords" (lat y lng de Caracas) y "reply" (tu mensaje).
+Ejemplo: {"coords": {"lat": 10.48, "lng": -66.89}, "reply": "Entendido, enviando unidad a Chacao."}`;
 
 app.post('/api/command', async (req, res) => {
     try {
         const { command } = req.body;
         
-        // MODELO: Usamos gemini-1.5-flash forzando la API estable (v1)
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: 'v1' }
-        );
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: command }
+            ],
+            model: "llama3-8b-8192", // El modelo más rápido disponible
+            response_format: { "type": "json_object" }
+        });
 
-        const prompt = `${systemPrompt}\n\nUsuario: ${command}`;
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const content = chatCompletion.choices[0].message.content;
+        res.json(JSON.parse(content));
 
-        // Limpieza de respuesta y envío al Orbe
-        try {
-            const cleanText = text.replace(/```json|```/g, '').trim();
-            const jsonResponse = JSON.parse(cleanText);
-            res.json(jsonResponse);
-        } catch (e) {
-            res.json({ reply: text });
-        }
     } catch (error) {
-        console.error("Error Core IA:", error.message);
-        res.status(500).json({ error: "Error en el servidor", details: error.message });
+        console.error("Error en Groq:", error.message);
+        res.status(500).json({ error: "Fallo en motor Llama 3", details: error.message });
     }
 });
 
-// PUERTO: Render asigna uno automáticamente, usamos 10000 como respaldo local
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Drivery OS: Terminal activa en puerto ${PORT}`);
+    console.log(`Drivery OS: Motor Groq activo en puerto ${PORT}`);
 });
