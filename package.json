@@ -1,18 +1,14 @@
 {
   "name": "drivery-backend",
   "version": "1.0.0",
-  "description": "Nucleo de Inteligencia Drivery OS",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@google/genai": "latest", 
+    "@google/generative-ai": "^0.21.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
