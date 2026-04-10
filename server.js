@@ -14,38 +14,43 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 let SESSION = {
     bearer: "",
     sessionToken: "",
-    userId: "69d85560192790ce9dbdf8c8" // Tu ID fijo
+    userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (INMORTALIDAD) ---
+// --- FUNCIÓN DE AUTO-LOGIN (CON LOGS DE DIAGNÓSTICO) ---
 async function refrescarSesion() {
-    console.log("🔄 Drivery OS: Detectada sesión expirada. Iniciando Auto-Login...");
+    console.log("🔄 Drivery OS: Iniciando protocolo de Auto-Login...");
     try {
         const res = await axios.post('https://admin.yummyrides.com/userslogin', {
             "email": process.env.USER_EMAIL,
             "password": process.env.USER_PASSWORD,
             "device_type": "android",
-            "device_token": "cXQm3AtaQDCbXIALsz_lr_:APA91bGGLq93QT5RrH8QdNJg-xxBNDMsw-xCpD_2rvNs0IwLsPtWRkv5Sx3XdxB-x4mIlC9r4Lqt0byUFBBwKsLxZpYjm3VutsalVKTpOh6dAywnzi3pLOw",
             "login_by": "manual",
             "device_id": "8700e0e37b212e08",
             "app_version": "3.12.10",
             "country_phone_code": "+58"
         });
 
-        if (res.data.success) {
+        // Log de diagnóstico para ver qué responde Yummy realmente
+        console.log("📡 Respuesta cruda de Yummy:", JSON.stringify(res.data));
+
+        if (res.data && res.data.success && res.data.response) {
             SESSION.bearer = `Bearer ${res.data.response.token}`;
             SESSION.sessionToken = res.data.response.token;
             console.log("✅ Sesión restaurada con éxito.");
             return true;
+        } else {
+            console.log("❌ Yummy rechazó el acceso. Motivo:", res.data.message || "Desconocido");
+            return false;
         }
-        return false;
     } catch (e) {
-        console.error("❌ Error crítico en Auto-Login:", e.message);
+        const errorMsg = e.response ? JSON.stringify(e.response.data) : e.message;
+        console.error("❌ Error en la conexión de Login:", errorMsg);
         return false;
     }
 }
 
-// --- MANEJADOR DE PETICIONES A YUMMY CON AUTO-REINTENTO ---
+// --- MANEJADOR DE PETICIONES A YUMMY ---
 async function callYummy(url, data) {
     const getHeaders = () => ({
         headers: {
@@ -63,7 +68,6 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
-        // Si el error es 401 (No autorizado), refrescamos token y reintentamos UNA VEZ
         if (err.response && err.response.status === 401) {
             const loginExitoso = await refrescarSesion();
             if (loginExitoso) {
@@ -75,17 +79,16 @@ async function callYummy(url, data) {
     }
 }
 
-// --- ENDPOINT PRINCIPAL: COMANDO DE VOZ ---
+// --- ENDPOINT COMMAND CENTER ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
 
     try {
-        // 1. Groq procesa el lenguaje natural para extraer coordenadas de Caracas
         const completion = await groq.chat.completions.create({
             messages: [
                 { 
                     role: "system", 
-                    content: "Eres el núcleo de Drivery OS. Recibes un destino en Caracas y respondes estrictamente un JSON con las coordenadas aproximadas: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." 
+                    content: "Eres Drivery Core. Recibes un destino en Caracas y respondes estrictamente un JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." 
                 },
                 { role: "user", content: command }
             ],
@@ -95,7 +98,6 @@ app.post('/api/command', async (req, res) => {
 
         const dest = JSON.parse(completion.choices[0].message.content);
 
-        // 2. Consultar precio real a Yummy (Con auto-login integrado)
         const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
@@ -103,20 +105,17 @@ app.post('/api/command', async (req, res) => {
             destinationLongitude: dest.lng
         });
 
-        // 3. Procesar datos del servicio
         const servicio = quote.response.trip_services[0].subcategories[0].service_types[0];
-        const margen = 0.50; // Tu ganancia fija
-        const precioUSD = (servicio.estimated_fare + margen).toFixed(2);
+        const precioUSD = (servicio.estimated_fare + 0.50).toFixed(2);
         const tasa = parseFloat(process.env.TASA_BCV) || 45.10;
 
-        // 4. Respuesta final al Orbe
         res.json({
             coords: { lat: dest.lat, lng: dest.lng },
             reply: `Copiado Jarnor. El traslado a ${dest.destino} tiene un valor de $${precioUSD}.`,
             display: {
                 usd: precioUSD,
                 bs: (precioUSD * tasa).toFixed(2),
-                tiempo: 5 // Tiempo estimado de llegada
+                tiempo: 5
             }
         });
 
@@ -126,14 +125,7 @@ app.post('/api/command', async (req, res) => {
     }
 });
 
-// --- INICIO DEL SERVIDOR ---
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`
-    -------------------------------------------
-    DRIVERY OS: Engine Autónomo Activo
-    Puerto: ${PORT}
-    Estado: Inmortalidad de Token Activada
-    -------------------------------------------
-    `);
+    console.log(`DRIVERY OS: Motor Autónomo en línea.`);
 });
