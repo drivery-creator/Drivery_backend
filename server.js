@@ -1,8 +1,7 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
 const Groq = require('groq-sdk');
-require('dotenv').config();
+const cors = require('cors');
 
 const app = express();
 app.use(cors());
@@ -10,125 +9,82 @@ app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// --- ESTADO DE SESIÓN EN MEMORIA ---
-let SESSION = {
-    bearer: "",        // Aquí irá el JWT (Bearer eyJ...)
-    sessionToken: "",  // Aquí irá el token corto
-    userId: "69d85560192790ce9dbdf8c8"
-};
-
-// --- FUNCIÓN DE AUTO-LOGIN (EXTRACCIÓN DE JWT + TOKEN) ---
-async function refrescarSesion() {
-    console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
+// --- 1. REGISTRO E IDENTIDAD (SOLO UNA VEZ) ---
+app.post('/api/register-identity', async (req, res) => {
+    const { id, password, deviceId } = req.body;
     try {
-        const res = await axios.post('https://admin.yummyrides.com/userslogin', {
-            "email": process.env.USER_EMAIL,
-            "password": process.env.USER_PASSWORD,
+        const response = await axios.post('https://admin.yummyrides.com/userslogin', {
+            "email": id,
+            "password": password,
             "device_type": "android",
             "login_by": "manual",
-            "device_id": "8700e0e37b212e08",
+            "device_id": deviceId,
             "app_version": "3.12.10",
             "country_phone_code": "+58"
         });
 
-        const data = res.data;
-
-        // Según tu log, el Bearer real es el 'jwt' y el token corto es 'token'
-        const bearerLargo = data.jwt || (data.user_detail ? data.user_detail.jwt : null);
-        const tokenCorto = data.token || (data.user_detail ? data.user_detail.token : null);
-
-        if (data.success && bearerLargo) {
-            SESSION.bearer = `Bearer ${bearerLargo}`;
-            SESSION.sessionToken = tokenCorto;
-            SESSION.userId = data.user_id || (data.user_detail ? data.user_detail.user_id : SESSION.userId);
-
-            console.log("✅ SESIÓN RESTAURADA. JWT e Identificadores sincronizados.");
-            return true;
+        if (response.data.success) {
+            const data = response.data.user_detail;
+            res.json({ 
+                success: true, 
+                session: { bearer: `Bearer ${data.jwt}`, token: data.token, userId: data.user_id }
+            });
         } else {
-            console.log("❌ Error: Yummy no envió el JWT esperado.");
-            return false;
+            res.json({ success: false, message: "Acceso denegado por la red de flota." });
         }
     } catch (e) {
-        console.error("❌ Fallo crítico en el túnel de Login:", e.message);
-        return false;
+        res.status(500).json({ success: false, message: "Error en el túnel de validación." });
     }
-}
+});
 
-// --- MANEJADOR DE PETICIONES A YUMMY ---
-async function callYummy(url, data) {
-    const getHeaders = () => ({
-        headers: {
-            'Authorization': SESSION.bearer,
-            'token': SESSION.sessionToken,
-            'user_id': SESSION.userId,
-            'app_version': '3.12.10',
-            'device_type': 'android',
-            'Content-Type': 'application/json',
-            'language': 'es'
-        }
-    });
-
-    try {
-        const res = await axios.post(url, data, getHeaders());
-        return res.data;
-    } catch (err) {
-        if (err.response && err.response.status === 401) {
-            console.log("⚠️ Acceso denegado (401). Refrescando sesión con JWT...");
-            const exito = await refrescarSesion();
-            if (exito) {
-                console.log("🚀 Reintentando con nueva llave JWT...");
-                const retryRes = await axios.post(url, data, getHeaders());
-                return retryRes.data;
-            }
-        }
-        throw err;
-    }
-}
-
-// --- ENDPOINT COMMAND CENTER ---
+// --- 2. COMANDO LOGÍSTICO (USO DIARIO) ---
 app.post('/api/command', async (req, res) => {
-    const { command, userCoords } = req.body;
+    const { command, userCoords, session } = req.body;
 
     try {
+        // Groq extrae el destino de cualquier frase informal
         const completion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: "Eres Drivery Core. Recibes un destino en Caracas y respondes estrictamente un JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." },
+                { 
+                    role: "system", 
+                    content: "Eres el núcleo de Drivery OS en Caracas. Tu única función es extraer el destino. Si el usuario dice 'llévame al Sambil', responde estrictamente: Sambil, Caracas. No uses frases, solo el destino exacto." 
+                },
                 { role: "user", content: command }
             ],
             model: "llama-3.3-70b-versatile",
             response_format: { type: "json_object" }
         });
 
-        const dest = JSON.parse(completion.choices[0].message.content);
+        const destData = JSON.parse(completion.choices[0].message.content);
+        const destinoFinal = destData.destino || destData.destination || command;
 
-        const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
+        // Llamada a Yummy con las llaves del usuario (Puente Transparente)
+        const quote = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
-            destinationLatitude: dest.lat,
-            destinationLongitude: dest.lng
-        });
-
-        const servicio = quote.response.trip_services[0].subcategories[0].service_types[0];
-        const precioUSD = (servicio.estimated_fare + 0.50).toFixed(2);
-        const tasa = parseFloat(process.env.TASA_BCV) || 45.10;
-
-        res.json({
-            coords: { lat: dest.lat, lng: dest.lng },
-            reply: `Copiado Jarnor. El traslado a ${dest.destino} tiene un valor de $${precioUSD}.`,
-            display: {
-                usd: precioUSD,
-                bs: (precioUSD * tasa).toFixed(2),
-                tiempo: 5
+            destinationName: destinoFinal
+        }, {
+            headers: {
+                'Authorization': session.bearer,
+                'token': session.token,
+                'user_id': session.userId,
+                'app_version': '3.12.10',
+                'device_type': 'android'
             }
         });
 
-    } catch (error) {
-        console.error("Core Error:", error.message);
-        res.status(500).json({ reply: "Falla de enlace con la flota." });
+        const servicio = quote.data.response.trip_services[0].subcategories[0].service_types[0];
+        const precioTotal = (servicio.estimated_fare + 0.50).toFixed(2);
+
+        res.json({
+            coords: { lat: servicio.lat || 10.48, lng: servicio.lng || -66.90 },
+            reply: `Destino: ${destinoFinal}. Tarifa: $${precioTotal}.`,
+            display: { usd: precioTotal, bs: (precioTotal * 45.10).toFixed(2), tiempo: 5 }
+        });
+
+    } catch (e) {
+        res.status(401).json({ reply: "Sesión de flota expirada. Re-autentique." });
     }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DRIVERY OS: Sistema Autónomo e Inmortal desplegado.`);
-});
+app.listen(process.env.PORT || 3000, () => console.log("Drivery OS Core Online"));
