@@ -17,7 +17,7 @@ let SESSION = {
     userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (DETECTA TOKEN EN CUALQUIER NIVEL) ---
+// --- FUNCIÓN DE AUTO-LOGIN (EXTRACCIÓN DIRECTA DE LA RAÍZ) ---
 async function refrescarSesion() {
     console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
     try {
@@ -32,27 +32,30 @@ async function refrescarSesion() {
         });
 
         const data = res.data;
-        // Buscamos el token donde sea que Yummy lo haya puesto según el log
-        const nuevoToken = data.token || (data.user_detail ? data.user_detail.token : null);
 
-        if (data.success && nuevoToken) {
-            SESSION.bearer = `Bearer ${nuevoToken}`;
-            SESSION.sessionToken = nuevoToken;
+        // Según tu log, el token está en la raíz: data.token
+        // Pero por seguridad, el "Cerebro Perfecto" busca en ambos sitios
+        const tokenFinal = data.token || (data.user_detail ? data.user_detail.token : null);
+
+        if (data.success && tokenFinal) {
+            SESSION.bearer = `Bearer ${tokenFinal}`;
+            SESSION.sessionToken = tokenFinal;
+            // El user_id también suele estar en la raíz o en user_detail
             SESSION.userId = data.user_id || (data.user_detail ? data.user_detail.user_id : SESSION.userId);
 
-            console.log("✅ SESIÓN RESTAURADA. Token capturado correctamente.");
+            console.log("✅ SESIÓN RESTAURADA. Token capturado de la raíz del JSON.");
             return true;
         } else {
-            console.log("❌ No se encontró el token en la respuesta de Yummy.");
+            console.log("❌ Error: Yummy respondió success pero el token no está donde debería.");
             return false;
         }
     } catch (e) {
-        console.error("❌ Error de red en Login:", e.message);
+        console.error("❌ Fallo crítico en el túnel de Login:", e.message);
         return false;
     }
 }
 
-// --- MANEJADOR DE PETICIONES CON AUTO-RETRY ---
+// --- MANEJADOR DE PETICIONES A YUMMY ---
 async function callYummy(url, data) {
     const getHeaders = () => ({
         headers: {
@@ -61,7 +64,8 @@ async function callYummy(url, data) {
             'user_id': SESSION.userId,
             'app_version': '3.12.10',
             'device_type': 'android',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'language': 'es'
         }
     });
 
@@ -69,10 +73,15 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
+        // Si detectamos el 401, disparamos el autorefresh
         if (err.response && err.response.status === 401) {
-            console.log("⚠️ Token expirado. Refrescando...");
+            console.log("⚠️ Acceso denegado (401). Refrescando credenciales automáticamente...");
             const exito = await refrescarSesion();
-            if (exito) return (await axios.post(url, data, getHeaders())).data;
+            if (exito) {
+                console.log("🚀 Reintentando con la nueva sesión...");
+                const retryRes = await axios.post(url, data, getHeaders());
+                return retryRes.data;
+            }
         }
         throw err;
     }
@@ -81,10 +90,11 @@ async function callYummy(url, data) {
 // --- ENDPOINT COMMAND CENTER ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
+
     try {
         const completion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: "Eres Drivery Core. Devuelve JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." },
+                { role: "system", content: "Eres Drivery Core. Recibes un destino en Caracas y respondes estrictamente un JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." },
                 { role: "user", content: command }
             ],
             model: "llama-3.3-70b-versatile",
@@ -107,13 +117,20 @@ app.post('/api/command', async (req, res) => {
         res.json({
             coords: { lat: dest.lat, lng: dest.lng },
             reply: `Copiado Jarnor. El traslado a ${dest.destino} tiene un valor de $${precioUSD}.`,
-            display: { usd: precioUSD, bs: (precioUSD * tasa).toFixed(2), tiempo: 5 }
+            display: {
+                usd: precioUSD,
+                bs: (precioUSD * tasa).toFixed(2),
+                tiempo: 5
+            }
         });
+
     } catch (error) {
         console.error("Core Error:", error.message);
-        res.status(500).json({ reply: "Falla de enlace con la flota." });
+        res.status(500).json({ reply: "Lo siento, el enlace con la flota falló temporalmente." });
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY OS: Sistema autónomo en línea.`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`DRIVERY OS: Sistema Autónomo e Inmortal desplegado.`);
+});
