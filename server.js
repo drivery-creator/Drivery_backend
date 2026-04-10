@@ -17,7 +17,7 @@ let SESSION = {
     userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (ESTRUCTURA CORREGIDA SEGÚN LOGS) ---
+// --- FUNCIÓN DE AUTO-LOGIN (AJUSTADA A LA RESPUESTA REAL DE YUMMY) ---
 async function refrescarSesion() {
     console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
     try {
@@ -31,24 +31,27 @@ async function refrescarSesion() {
             "country_phone_code": "+58"
         });
 
-        // Validamos según la respuesta real: res.data.user_detail.token
+        // VALIDACIÓN SEGÚN LOGS: El token está en res.data.user_detail.token
         if (res.data && res.data.success && res.data.user_detail && res.data.user_detail.token) {
             const nuevoToken = res.data.user_detail.token;
             SESSION.bearer = `Bearer ${nuevoToken}`;
             SESSION.sessionToken = nuevoToken;
-            console.log("✅ SESIÓN RESTAURADA. Token obtenido de user_detail.");
+            SESSION.userId = res.data.user_detail.user_id; // Actualizamos el ID dinámicamente
+
+            console.log("✅ SESIÓN RESTAURADA. Token obtenido de user_detail con éxito.");
             return true;
         } else {
-            console.log("❌ Respuesta de Yummy sin token válido.");
+            console.log("❌ Error: Yummy respondió success pero no envió el token en user_detail.");
             return false;
         }
     } catch (e) {
-        console.error("❌ Fallo crítico de red en Login:", e.message);
+        const errMsg = e.response ? JSON.stringify(e.response.data) : e.message;
+        console.error("❌ Fallo crítico en la conexión de Login:", errMsg);
         return false;
     }
 }
 
-// --- MANEJADOR DE PETICIONES A YUMMY ---
+// --- MANEJADOR DE PETICIONES A YUMMY CON AUTO-RETRY ---
 async function callYummy(url, data) {
     const getHeaders = () => ({
         headers: {
@@ -66,12 +69,12 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
-        // Si falla con 401, refrescamos sesión y reintentamos
+        // Si falla con 401, intentamos autorenovación
         if (err.response && err.response.status === 401) {
-            console.log("⚠️ Token inválido (401). Intentando autorenovación...");
+            console.log("⚠️ Acceso denegado (401). Intentando autorenovación de sesión...");
             const exito = await refrescarSesion();
             if (exito) {
-                console.log("🚀 Reintentando petición original con nuevo token...");
+                console.log("🚀 Reintentando petición con la nueva sesión...");
                 const retryRes = await axios.post(url, data, getHeaders());
                 return retryRes.data;
             }
@@ -85,7 +88,7 @@ app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
 
     try {
-        // 1. IA extrae coordenadas del destino
+        // 1. Groq extrae coordenadas del destino solicitado
         const completion = await groq.chat.completions.create({
             messages: [
                 { 
@@ -100,7 +103,7 @@ app.post('/api/command', async (req, res) => {
 
         const dest = JSON.parse(completion.choices[0].message.content);
 
-        // 2. Consulta a la flota (con auto-retry integrado)
+        // 2. Consulta a la flota con el sistema de auto-reintento
         const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
@@ -108,6 +111,7 @@ app.post('/api/command', async (req, res) => {
             destinationLongitude: dest.lng
         });
 
+        // 3. Cálculo de logística
         const servicio = quote.response.trip_services[0].subcategories[0].service_types[0];
         const precioUSD = (servicio.estimated_fare + 0.50).toFixed(2);
         const tasa = parseFloat(process.env.TASA_BCV) || 45.10;
@@ -130,5 +134,11 @@ app.post('/api/command', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DRIVERY OS: Sistema Autónomo e Inmortal desplegado.`);
+    console.log(`
+    -------------------------------------------
+    DRIVERY OS: ENGINE AUTÓNOMO DESPLEGADO
+    Estado: Protocolo de Inmortalidad Activo
+    Puerto: ${PORT}
+    -------------------------------------------
+    `);
 });
