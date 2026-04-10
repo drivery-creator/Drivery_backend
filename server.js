@@ -28,7 +28,6 @@ app.post('/api/register-identity', async (req, res) => {
 
         if (response.data.success) {
             const data = response.data.user_detail;
-            // Extraemos el nombre real para el saludo del Orbe
             const nombreReal = data.first_name || "Comandante";
             
             res.json({ 
@@ -54,12 +53,12 @@ app.post('/api/command', async (req, res) => {
     const { command, userCoords, session } = req.body;
 
     try {
-        // El Orbe interpreta la intención del mensaje usando Groq
+        // Interpretación del destino con Groq
         const completion = await groq.chat.completions.create({
             messages: [
                 { 
                     role: "system", 
-                    content: "Eres el núcleo de Drivery OS en Caracas. Tu función es extraer el destino. Responde estrictamente en JSON: {\"destino\": \"Lugar, Caracas\"}. No importa qué tan informal hable el usuario, tú extraes el lugar exacto." 
+                    content: "Eres el núcleo de Drivery OS en Caracas. Extrae el destino. Responde estrictamente JSON: {\"destino\": \"Lugar, Caracas\"}." 
                 },
                 { role: "user", content: command }
             ],
@@ -70,49 +69,59 @@ app.post('/api/command', async (req, res) => {
         const interpretation = JSON.parse(completion.choices[0].message.content);
         const destinoFinal = interpretation.destino || command;
 
-        // Solicitud de cotización real a la infraestructura de Yummy
+        // LOG DE DEPURACIÓN EN RENDER
+        console.log(`Solicitud: ${destinoFinal} | Lat: ${userCoords.lat} Lng: ${userCoords.lng}`);
+
+        // Solicitud de cotización con corrección de tipos (Evita el Error 400)
         const quote = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
-            pickupLatitude: userCoords.lat,
-            pickupLongitude: userCoords.lng,
-            destinationName: destinoFinal
+            pickupLatitude: parseFloat(userCoords.lat),
+            pickupLongitude: parseFloat(userCoords.lng),
+            destinationName: String(destinoFinal)
         }, {
             headers: {
-                'Authorization': session.bearer,
-                'token': session.token,
-                'user_id': session.userId,
+                'Authorization': String(session.bearer),
+                'token': String(session.token),
+                'user_id': String(session.userId),
                 'app_version': '3.12.10',
                 'device_type': 'android'
             }
         });
 
-        // Extraemos la mejor opción de la flota (normalmente la primera subcategoría)
-        const servicio = quote.data.response.trip_services[0].subcategories[0].service_types[0];
+        // Verificación de datos de respuesta
+        if (!quote.data.response || !quote.data.response.trip_services) {
+            throw new Error("Respuesta de flota vacía.");
+        }
+
+        const subcategory = quote.data.response.trip_services[0].subcategories[0];
+        const servicio = subcategory.service_types[0];
         
-        // Ajuste de tarifa estratégica (puedes añadir un margen si deseas)
         const precioUSD = (servicio.estimated_fare).toFixed(2);
-        const precioBS = (precioUSD * 45.10).toFixed(2); // Tasa dinámica opcional
+        const precioBS = (precioUSD * 45.10).toFixed(2); 
 
         res.json({
             coords: { lat: servicio.lat, lng: servicio.lng },
             reply: `Ruta confirmada a ${destinoFinal}. El valor de flota es de ${precioUSD} dólares.`,
-            display: { 
-                usd: precioUSD, 
-                bs: precioBS, 
-                tiempo: 5 // Tiempo estimado promedio de llegada
-            }
+            display: { usd: precioUSD, bs: precioBS, tiempo: 5 }
         });
 
     } catch (e) {
-        console.error("Error Logístico:", e.message);
-        res.status(401).json({ reply: "Sesión de flota expirada. Por favor, re-vincule su dispositivo." });
+        // Captura específica del error 400 o expiración
+        if (e.response) {
+            console.error("Error desde Yummy:", e.response.status, e.response.data);
+            if (e.response.status === 400 || e.response.status === 401) {
+                return res.status(401).json({ reply: "El enlace a la flota expiró. Por favor, re-vincule su dispositivo en la bóveda." });
+            }
+        }
+        
+        console.error("Fallo general:", e.message);
+        res.status(500).json({ reply: "Núcleo en mantenimiento. Reintente en un momento." });
     }
 });
 
-// --- 3. MANTENIMIENTO DE CONEXIÓN (KEEP-ALIVE) ---
-// Esta ruta sirve para que Render no duerma el servidor
+// --- 3. MANTENIMIENTO (PING) ---
 app.get('/ping', (req, res) => res.send('Drivery OS Core Active'));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Render usa el 10000 por defecto
 app.listen(PORT, () => {
     console.log(`
     -------------------------------------------
