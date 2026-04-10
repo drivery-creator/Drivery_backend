@@ -12,12 +12,12 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // --- ESTADO DE SESIÓN EN MEMORIA ---
 let SESSION = {
-    bearer: "",
-    sessionToken: "",
+    bearer: "",        // Aquí irá el JWT (Bearer eyJ...)
+    sessionToken: "",  // Aquí irá el token corto
     userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (EXTRACCIÓN DIRECTA DE LA RAÍZ) ---
+// --- FUNCIÓN DE AUTO-LOGIN (EXTRACCIÓN DE JWT + TOKEN) ---
 async function refrescarSesion() {
     console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
     try {
@@ -33,20 +33,19 @@ async function refrescarSesion() {
 
         const data = res.data;
 
-        // Según tu log, el token está en la raíz: data.token
-        // Pero por seguridad, el "Cerebro Perfecto" busca en ambos sitios
-        const tokenFinal = data.token || (data.user_detail ? data.user_detail.token : null);
+        // Según tu log, el Bearer real es el 'jwt' y el token corto es 'token'
+        const bearerLargo = data.jwt || (data.user_detail ? data.user_detail.jwt : null);
+        const tokenCorto = data.token || (data.user_detail ? data.user_detail.token : null);
 
-        if (data.success && tokenFinal) {
-            SESSION.bearer = `Bearer ${tokenFinal}`;
-            SESSION.sessionToken = tokenFinal;
-            // El user_id también suele estar en la raíz o en user_detail
+        if (data.success && bearerLargo) {
+            SESSION.bearer = `Bearer ${bearerLargo}`;
+            SESSION.sessionToken = tokenCorto;
             SESSION.userId = data.user_id || (data.user_detail ? data.user_detail.user_id : SESSION.userId);
 
-            console.log("✅ SESIÓN RESTAURADA. Token capturado de la raíz del JSON.");
+            console.log("✅ SESIÓN RESTAURADA. JWT e Identificadores sincronizados.");
             return true;
         } else {
-            console.log("❌ Error: Yummy respondió success pero el token no está donde debería.");
+            console.log("❌ Error: Yummy no envió el JWT esperado.");
             return false;
         }
     } catch (e) {
@@ -73,12 +72,11 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
-        // Si detectamos el 401, disparamos el autorefresh
         if (err.response && err.response.status === 401) {
-            console.log("⚠️ Acceso denegado (401). Refrescando credenciales automáticamente...");
+            console.log("⚠️ Acceso denegado (401). Refrescando sesión con JWT...");
             const exito = await refrescarSesion();
             if (exito) {
-                console.log("🚀 Reintentando con la nueva sesión...");
+                console.log("🚀 Reintentando con nueva llave JWT...");
                 const retryRes = await axios.post(url, data, getHeaders());
                 return retryRes.data;
             }
@@ -126,7 +124,7 @@ app.post('/api/command', async (req, res) => {
 
     } catch (error) {
         console.error("Core Error:", error.message);
-        res.status(500).json({ reply: "Lo siento, el enlace con la flota falló temporalmente." });
+        res.status(500).json({ reply: "Falla de enlace con la flota." });
     }
 });
 
