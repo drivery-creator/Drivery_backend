@@ -17,9 +17,9 @@ let SESSION = {
     userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (CON LOGS DE DIAGNÓSTICO) ---
+// --- FUNCIÓN DE AUTO-LOGIN (ESTRUCTURA CORREGIDA SEGÚN LOGS) ---
 async function refrescarSesion() {
-    console.log("🔄 Drivery OS: Iniciando protocolo de Auto-Login...");
+    console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
     try {
         const res = await axios.post('https://admin.yummyrides.com/userslogin', {
             "email": process.env.USER_EMAIL,
@@ -31,21 +31,19 @@ async function refrescarSesion() {
             "country_phone_code": "+58"
         });
 
-        // Log de diagnóstico para ver qué responde Yummy realmente
-        console.log("📡 Respuesta cruda de Yummy:", JSON.stringify(res.data));
-
-        if (res.data && res.data.success && res.data.response) {
-            SESSION.bearer = `Bearer ${res.data.response.token}`;
-            SESSION.sessionToken = res.data.response.token;
-            console.log("✅ Sesión restaurada con éxito.");
+        // Validamos según la respuesta real: res.data.user_detail.token
+        if (res.data && res.data.success && res.data.user_detail && res.data.user_detail.token) {
+            const nuevoToken = res.data.user_detail.token;
+            SESSION.bearer = `Bearer ${nuevoToken}`;
+            SESSION.sessionToken = nuevoToken;
+            console.log("✅ SESIÓN RESTAURADA. Token obtenido de user_detail.");
             return true;
         } else {
-            console.log("❌ Yummy rechazó el acceso. Motivo:", res.data.message || "Desconocido");
+            console.log("❌ Respuesta de Yummy sin token válido.");
             return false;
         }
     } catch (e) {
-        const errorMsg = e.response ? JSON.stringify(e.response.data) : e.message;
-        console.error("❌ Error en la conexión de Login:", errorMsg);
+        console.error("❌ Fallo crítico de red en Login:", e.message);
         return false;
     }
 }
@@ -68,9 +66,12 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
+        // Si falla con 401, refrescamos sesión y reintentamos
         if (err.response && err.response.status === 401) {
-            const loginExitoso = await refrescarSesion();
-            if (loginExitoso) {
+            console.log("⚠️ Token inválido (401). Intentando autorenovación...");
+            const exito = await refrescarSesion();
+            if (exito) {
+                console.log("🚀 Reintentando petición original con nuevo token...");
                 const retryRes = await axios.post(url, data, getHeaders());
                 return retryRes.data;
             }
@@ -84,6 +85,7 @@ app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
 
     try {
+        // 1. IA extrae coordenadas del destino
         const completion = await groq.chat.completions.create({
             messages: [
                 { 
@@ -98,6 +100,7 @@ app.post('/api/command', async (req, res) => {
 
         const dest = JSON.parse(completion.choices[0].message.content);
 
+        // 2. Consulta a la flota (con auto-retry integrado)
         const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
@@ -127,5 +130,5 @@ app.post('/api/command', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DRIVERY OS: Motor Autónomo en línea.`);
+    console.log(`DRIVERY OS: Sistema Autónomo e Inmortal desplegado.`);
 });
