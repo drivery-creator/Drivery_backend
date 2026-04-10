@@ -17,7 +17,7 @@ let SESSION = {
     userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE AUTO-LOGIN (AJUSTADA A LA RESPUESTA REAL DE YUMMY) ---
+// --- FUNCIÓN DE AUTO-LOGIN (DETECTA TOKEN EN CUALQUIER NIVEL) ---
 async function refrescarSesion() {
     console.log("🔄 Drivery OS: Ejecutando protocolo de Auto-Login...");
     try {
@@ -31,27 +31,28 @@ async function refrescarSesion() {
             "country_phone_code": "+58"
         });
 
-        // VALIDACIÓN SEGÚN LOGS: El token está en res.data.user_detail.token
-        if (res.data && res.data.success && res.data.user_detail && res.data.user_detail.token) {
-            const nuevoToken = res.data.user_detail.token;
+        const data = res.data;
+        // Buscamos el token donde sea que Yummy lo haya puesto según el log
+        const nuevoToken = data.token || (data.user_detail ? data.user_detail.token : null);
+
+        if (data.success && nuevoToken) {
             SESSION.bearer = `Bearer ${nuevoToken}`;
             SESSION.sessionToken = nuevoToken;
-            SESSION.userId = res.data.user_detail.user_id; // Actualizamos el ID dinámicamente
+            SESSION.userId = data.user_id || (data.user_detail ? data.user_detail.user_id : SESSION.userId);
 
-            console.log("✅ SESIÓN RESTAURADA. Token obtenido de user_detail con éxito.");
+            console.log("✅ SESIÓN RESTAURADA. Token capturado correctamente.");
             return true;
         } else {
-            console.log("❌ Error: Yummy respondió success pero no envió el token en user_detail.");
+            console.log("❌ No se encontró el token en la respuesta de Yummy.");
             return false;
         }
     } catch (e) {
-        const errMsg = e.response ? JSON.stringify(e.response.data) : e.message;
-        console.error("❌ Fallo crítico en la conexión de Login:", errMsg);
+        console.error("❌ Error de red en Login:", e.message);
         return false;
     }
 }
 
-// --- MANEJADOR DE PETICIONES A YUMMY CON AUTO-RETRY ---
+// --- MANEJADOR DE PETICIONES CON AUTO-RETRY ---
 async function callYummy(url, data) {
     const getHeaders = () => ({
         headers: {
@@ -60,8 +61,7 @@ async function callYummy(url, data) {
             'user_id': SESSION.userId,
             'app_version': '3.12.10',
             'device_type': 'android',
-            'Content-Type': 'application/json',
-            'language': 'es'
+            'Content-Type': 'application/json'
         }
     });
 
@@ -69,15 +69,10 @@ async function callYummy(url, data) {
         const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
-        // Si falla con 401, intentamos autorenovación
         if (err.response && err.response.status === 401) {
-            console.log("⚠️ Acceso denegado (401). Intentando autorenovación de sesión...");
+            console.log("⚠️ Token expirado. Refrescando...");
             const exito = await refrescarSesion();
-            if (exito) {
-                console.log("🚀 Reintentando petición con la nueva sesión...");
-                const retryRes = await axios.post(url, data, getHeaders());
-                return retryRes.data;
-            }
+            if (exito) return (await axios.post(url, data, getHeaders())).data;
         }
         throw err;
     }
@@ -86,15 +81,10 @@ async function callYummy(url, data) {
 // --- ENDPOINT COMMAND CENTER ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
-
     try {
-        // 1. Groq extrae coordenadas del destino solicitado
         const completion = await groq.chat.completions.create({
             messages: [
-                { 
-                    role: "system", 
-                    content: "Eres Drivery Core. Recibes un destino en Caracas y respondes estrictamente un JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." 
-                },
+                { role: "system", content: "Eres Drivery Core. Devuelve JSON: { \"lat\": numero, \"lng\": numero, \"destino\": \"nombre\" }." },
                 { role: "user", content: command }
             ],
             model: "llama-3.3-70b-versatile",
@@ -103,7 +93,6 @@ app.post('/api/command', async (req, res) => {
 
         const dest = JSON.parse(completion.choices[0].message.content);
 
-        // 2. Consulta a la flota con el sistema de auto-reintento
         const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
@@ -111,7 +100,6 @@ app.post('/api/command', async (req, res) => {
             destinationLongitude: dest.lng
         });
 
-        // 3. Cálculo de logística
         const servicio = quote.response.trip_services[0].subcategories[0].service_types[0];
         const precioUSD = (servicio.estimated_fare + 0.50).toFixed(2);
         const tasa = parseFloat(process.env.TASA_BCV) || 45.10;
@@ -119,26 +107,13 @@ app.post('/api/command', async (req, res) => {
         res.json({
             coords: { lat: dest.lat, lng: dest.lng },
             reply: `Copiado Jarnor. El traslado a ${dest.destino} tiene un valor de $${precioUSD}.`,
-            display: {
-                usd: precioUSD,
-                bs: (precioUSD * tasa).toFixed(2),
-                tiempo: 5
-            }
+            display: { usd: precioUSD, bs: (precioUSD * tasa).toFixed(2), tiempo: 5 }
         });
-
     } catch (error) {
-        console.error("Error en el Core:", error.message);
-        res.status(500).json({ reply: "Lo siento, el enlace con la flota falló temporalmente." });
+        console.error("Core Error:", error.message);
+        res.status(500).json({ reply: "Falla de enlace con la flota." });
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`
-    -------------------------------------------
-    DRIVERY OS: ENGINE AUTÓNOMO DESPLEGADO
-    Estado: Protocolo de Inmortalidad Activo
-    Puerto: ${PORT}
-    -------------------------------------------
-    `);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY OS: Sistema autónomo en línea.`));
