@@ -10,16 +10,16 @@ app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// --- MEMORIA DINÁMICA DE TOKENS ---
-let AUTH_STATE = {
+// Memoria dinámica de sesión
+let SESSION = {
     bearer: process.env.YUMMY_TOKEN || "",
-    session: process.env.YUMMY_SESSION_TOKEN || "",
-    user_id: "69d85560192790ce9dbdf8c8"
+    sessionToken: process.env.YUMMY_SESSION_TOKEN || "",
+    userId: "69d85560192790ce9dbdf8c8"
 };
 
-// --- FUNCIÓN DE INMORTALIDAD (AUTO-LOGIN) ---
-async function refrescarSesion() {
-    console.log("🔄 Iniciando Auto-Login en Yummy...");
+// --- PROTOCOLO DE INMORTALIDAD (AUTO-LOGIN) ---
+async function autoLogin() {
+    console.log("🔄 Renovando sesión en infraestructura Yummy...");
     try {
         const res = await axios.post('https://admin.yummyrides.com/userslogin', {
             "email": "4241291671",
@@ -33,24 +33,24 @@ async function refrescarSesion() {
         });
 
         if (res.data.success) {
-            AUTH_STATE.bearer = `Bearer ${res.data.response.token}`;
-            AUTH_STATE.session = res.data.response.token; // En Yummy v3 suelen coincidir
-            console.log("✅ Sesión Renovada. Nuevo Token generado.");
+            SESSION.bearer = `Bearer ${res.data.response.token}`;
+            SESSION.sessionToken = res.data.response.token;
+            console.log("✅ Sesión resucitada con éxito.");
             return true;
         }
     } catch (e) {
-        console.error("❌ Fallo crítico en Auto-Login:", e.message);
+        console.error("❌ Fallo crítico de autenticación:", e.message);
         return false;
     }
 }
 
-// --- WRAPPER INTELIGENTE PARA PETICIONES ---
-async function yummyRequest(url, data) {
-    const config = () => ({
+// --- ORQUESTADOR DE PETICIONES ---
+async function callYummy(url, data) {
+    const getHeaders = () => ({
         headers: {
-            'Authorization': AUTH_STATE.bearer,
-            'token': AUTH_STATE.session,
-            'user_id': AUTH_STATE.user_id,
+            'Authorization': SESSION.bearer,
+            'token': SESSION.sessionToken,
+            'user_id': SESSION.userId,
             'app_version': '3.12.10',
             'device_type': 'android',
             'Content-Type': 'application/json'
@@ -58,31 +58,34 @@ async function yummyRequest(url, data) {
     });
 
     try {
-        const res = await axios.post(url, data, config());
+        const res = await axios.post(url, data, getHeaders());
         return res.data;
     } catch (err) {
         if (err.response && err.response.status === 401) {
-            const exito = await refrescarSesion();
-            if (exito) return (await axios.post(url, data, config())).data;
+            const reintentar = await autoLogin();
+            if (reintentar) return (await axios.post(url, data, getHeaders())).data;
         }
         throw err;
     }
 }
 
-// --- ENDPOINT PRINCIPAL (GROQ + YUMMY) ---
+// --- ENDPOINT COMMAND CENTER ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
     try {
-        // 1. Groq procesa destino (Usando tu prompt de CaracasPoints)
+        // 1. IA procesa el lenguaje natural
         const chat = await groq.chat.completions.create({
-            messages: [{ role: "system", content: "Eres Drivery Core. Devuelve JSON: {lat, lng, destino}" }, { role: "user", content: command }],
+            messages: [
+                { role: "system", content: "Eres el núcleo de Drivery OS. Recibes un destino en Caracas y respondes SOLO un JSON con: {lat, lng, destino}." },
+                { role: "user", content: command }
+            ],
             model: "llama-3.3-70b-versatile",
             response_format: { type: "json_object" }
         });
         const dest = JSON.parse(chat.choices[0].message.content);
 
-        // 2. Cotización Real con Auto-Retry
-        const quote = await yummyRequest('https://api.yummyrides.com/api/v2/quotation', {
+        // 2. Cotización en tiempo real
+        const quote = await callYummy('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: userCoords.lat,
             pickupLongitude: userCoords.lng,
             destinationLatitude: dest.lat,
@@ -90,17 +93,23 @@ app.post('/api/command', async (req, res) => {
         });
 
         const servicio = quote.response.trip_services[0].subcategories[0].service_types[0];
-        const precioFinal = (servicio.estimated_fare + 0.50).toFixed(2);
+        const precioConMargen = (servicio.estimated_fare + 0.50).toFixed(2);
+        const tasa = 45.10;
 
         res.json({
             coords: { lat: dest.lat, lng: dest.lng },
-            reply: `Copiado Jarnor. Viaje a ${dest.destino} en $${precioFinal}.`,
-            display: { usd: precioFinal, bs: (precioFinal * 45.10).toFixed(2), tiempo: 5 }
+            reply: `Entendido Jarnor. Destino: ${dest.destino}. El costo logístico es de $${precioConMargen}.`,
+            display: { 
+                usd: precioConMargen, 
+                bs: (precioConMargen * tasa).toFixed(2), 
+                tiempo: 5 
+            }
         });
     } catch (e) {
-        res.status(500).json({ error: "Error en el núcleo Drivery OS" });
+        console.error(e);
+        res.status(500).json({ reply: "Error de enlace con la flota." });
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Drivery OS: Engine Autónomo Activo`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Drivery OS Core: Online en puerto ${PORT}`));
