@@ -9,8 +9,18 @@ app.use(cors());
 app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-// Llave de Google para convertir nombres a coordenadas
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
+
+// --- FUNCIÓN TÁCTICA: OBTENER TASA BCV OFICIAL ---
+async function obtenerTasaBCV() {
+    try {
+        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial');
+        return parseFloat(res.data.promedio);
+    } catch (e) {
+        console.error("Fallo al consultar BCV, usando tasa de emergencia.");
+        return 45.10; // Tasa de respaldo
+    }
+}
 
 // --- 1. REGISTRO E IDENTIDAD ---
 app.post('/api/register-identity', async (req, res) => {
@@ -31,12 +41,12 @@ app.post('/api/register-identity', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// --- 2. COMANDO LOGÍSTICO (PROCESAMIENTO CON GEOCODING) ---
+// --- 2. COMANDO LOGÍSTICO (GROQ + GOOGLE + YUMMY + BCV) ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords, session } = req.body;
 
     try {
-        // A. EXTRAER NOMBRE DEL DESTINO CON IA
+        // A. Interpretación del destino
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: "Eres el núcleo de Drivery OS. Extrae el destino. JSON: {\"destino\": \"Lugar, Caracas\"}." },
@@ -47,57 +57,46 @@ app.post('/api/command', async (req, res) => {
         });
         const destinoNombre = JSON.parse(completion.choices[0].message.content).destino;
 
-        // B. GEOCODIFICACIÓN: Convertir nombre a Lat/Lng (Solución al Error 400)
-        const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`;
-        const geoResponse = await axios.get(geoUrl);
-        
-        if (!geoResponse.data.results[0]) throw new Error("Ubicación no encontrada");
-        
-        const coordsDestino = geoResponse.data.results[0].geometry.location;
+        // B. Geocoding (Nombre -> Coordenadas)
+        const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
+        if (!geo.data.results[0]) throw new Error("Destino no localizado");
+        const destCoords = geo.data.results[0].geometry.location;
 
-        console.log(`Logística: De [${userCoords.lat}] a ${destinoNombre} [${coordsDestino.lat}, ${coordsDestino.lng}]`);
-
-        // C. COTIZACIÓN CON FORMATO NUEVO (Sin destinationName, solo Coordenadas)
+        // C. Cotización en la Flota
         const quote = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: parseFloat(userCoords.lat),
             pickupLongitude: parseFloat(userCoords.lng),
-            destinationLatitude: parseFloat(coordsDestino.lat),
-            destinationLongitude: parseFloat(coordsDestino.lng)
+            destinationLatitude: parseFloat(destCoords.lat),
+            destinationLongitude: parseFloat(destCoords.lng)
         }, {
             headers: {
                 'Authorization': String(session.bearer),
                 'token': String(session.token),
                 'user_id': String(session.userId),
-                'app_version': '3.12.10',
-                'device_type': 'android'
+                'app_version': '3.12.10', 'device_type': 'android'
             }
         });
 
         const sub = quote.data.response.trip_services[0].subcategories[0];
         const servicio = sub.service_types[0];
-        const precio = (servicio.estimated_fare).toFixed(2);
+        const precioUSD = servicio.estimated_fare;
+
+        // D. Conversión BCV en tiempo real
+        const tasa = await obtenerTasaBCV();
+        const precioBS = (precioUSD * tasa).toFixed(2);
 
         res.json({
-            coords: { lat: coordsDestino.lat, lng: coordsDestino.lng },
-            reply: `Ruta a ${destinoNombre} confirmada. Tarifa: $${precio}.`,
-            display: { usd: precio, bs: (precio * 45.10).toFixed(2), tiempo: 5 }
+            coords: { lat: destCoords.lat, lng: destCoords.lng },
+            reply: `Ruta a ${destinoNombre} confirmada. Tarifa: $${precioUSD.toFixed(2)} (${precioBS} Bs. a tasa BCV).`,
+            display: { usd: precioUSD.toFixed(2), bs: precioBS, tasa: tasa, tiempo: 5 }
         });
 
     } catch (e) {
-        console.error("Fallo Logístico:", e.response ? e.response.data : e.message);
-        res.status(401).json({ reply: "Destino inválido o sesión de flota expirada." });
+        console.error("Fallo:", e.message);
+        res.status(401).json({ reply: "Información inválida o sesión expirada." });
     }
 });
 
-app.get('/ping', (req, res) => res.send('Drivery Active'));
-
+app.get('/ping', (req, res) => res.send('Drivery OS Active'));
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`
-    -------------------------------------------
-    DRIVERY OS: NÚCLEO OPERATIVO ACTIVADO
-    PUERTO: ${PORT}
-    ESTADO: LISTO (PROTOCOLO GEO-COORD)
-    -------------------------------------------
-    `);
-});
+app.listen(PORT, () => console.log(`DRIVERY CORE ONLINE - PORT ${PORT}`));
