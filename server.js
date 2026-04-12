@@ -11,7 +11,6 @@ app.use(express.json());
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
-// --- CACHÉ INTELIGENTE (ELIMINA LATENCIA DE RED) ---
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
 async function obtenerTasaBCV() {
@@ -24,25 +23,21 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
-// --- LOGIN ACELERADO ---
 async function loginFlota(id, password) {
     try {
         const response = await axios.post('https://admin.yummyrides.com/userslogin', {
             "email": id, "password": password, "device_type": "android",
             "login_by": "manual", "device_id": "DRV-MASTER", "app_version": "3.12.10", "country_phone_code": "+58"
-        }, { timeout: 3000 }); // Si no loguea en 3s, abortamos
+        }, { timeout: 3000 });
         return response.data;
     } catch (e) { return { success: false }; }
 }
 
-// --- NÚCLEO DRIVERY TURBO ---
 app.post('/api/command', async (req, res) => {
     let { command, userCoords, session, credentials } = req.body;
     let newSessionGenerated = null;
 
     try {
-        // 1. PROCESAMIENTO MULTI-HILO (IA + Tasa + Validación de Sesión)
-        // Ejecutamos todo en paralelo para que el tiempo total sea solo el de la tarea más lenta
         const [completion, tasaBCV] = await Promise.all([
             groq.chat.completions.create({
                 messages: [{ role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Caracas\"}." }, { role: "user", content: command }],
@@ -53,8 +48,6 @@ app.post('/api/command', async (req, res) => {
         ]);
 
         const destinoNombre = JSON.parse(completion.choices[0].message.content).destino;
-
-        // 2. GEOCODING OPTIMIZADO PARA CARACAS
         const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&bounds=10.40,-67.05|10.55,-66.75&key=${GOOGLE_MAPS_KEY}`;
         const geo = await axios.get(geoUrl, { timeout: 2000 });
         if (!geo.data.results[0]) throw new Error("DEST_NOT_FOUND");
@@ -81,9 +74,7 @@ app.post('/api/command', async (req, res) => {
         try {
             quoteResponse = await solicitarQuote(session);
         } catch (err) {
-            // AUTO-LOGIN AGRESIVO SI FALLA LA SESIÓN
             if (credentials) {
-                console.log("Detectada sesión expirada o lenta. Re-vinculando...");
                 const reloginData = await loginFlota(credentials.id, credentials.pass);
                 if (reloginData.success) {
                     const u = reloginData.user_detail;
@@ -93,24 +84,29 @@ app.post('/api/command', async (req, res) => {
             } else { throw err; }
         }
 
-        const servicio = quoteResponse.data.response.trip_services[0].subcategories[0].service_types[0];
-        const precioUSD = servicio.estimated_fare;
-        const precioBS = (precioUSD * tasaBCV).toFixed(2);
+        // --- EXTRACCIÓN DE TODA LA FLOTA ---
+        const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
+        const fleetData = services.map(s => ({
+            id: s.id,
+            name: s.name,
+            usd: s.estimated_fare.toFixed(2),
+            bs: (s.estimated_fare * tasaBCV).toFixed(2),
+            arrival: s.eta || "4 min"
+        }));
 
         res.json({
             coords: { lat: destCoords.lat, lng: destCoords.lng },
-            reply: `Ruta a ${destinoNombre} fijada. Tarifa: $${precioUSD.toFixed(2)} (${precioBS} Bs.).`,
-            display: { usd: precioUSD.toFixed(2), bs: precioBS, tasa: tasaBCV, tiempo: 5 },
+            origin: userCoords,
+            reply: `Ruta a ${destinoNombre} fijada. Análisis de flota completado.`,
+            display: { fleet: fleetData, tasa: tasaBCV, usd: fleetData[0].usd, bs: fleetData[0].bs, tiempo: 5 },
             newSession: newSessionGenerated
         });
 
     } catch (e) {
-        console.error("Error Core:", e.message);
         res.status(401).json({ reply: "Sincronización necesaria. Diga el destino nuevamente." });
     }
 });
 
-// Registro inicial
 app.post('/api/register-identity', async (req, res) => {
     const { id, password } = req.body;
     const data = await loginFlota(id, password);
