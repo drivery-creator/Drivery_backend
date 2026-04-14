@@ -66,7 +66,7 @@ app.post('/api/command', async (req, res) => {
                     'user_id': String(s.userId),
                     'app_version': '3.12.10', 'device_type': 'android'
                 },
-                timeout: 3000
+                timeout: 4000
             });
         };
 
@@ -117,8 +117,6 @@ app.post('/api/register-identity', async (req, res) => {
         });
     } else { res.status(401).json({ success: false }); }
 });
-
-app.get('/ping', (req, res) => res.send('OK'));
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`DRIVERY CORE ACTIVE`));
