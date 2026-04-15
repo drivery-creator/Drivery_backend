@@ -84,9 +84,9 @@ app.post('/api/command', async (req, res) => {
             } else { throw err; }
         }
 
+        // --- INTERCEPCIÓN DE PLANES ---
         const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
         const fleetData = services.map(s => ({
-            id: s.id,
             name: s.name,
             usd: s.estimated_fare.toFixed(2),
             bs: (s.estimated_fare * tasaBCV).toFixed(2),
@@ -94,9 +94,9 @@ app.post('/api/command', async (req, res) => {
         }));
 
         res.json({
-            coords: { lat: destCoords.lat, lng: destCoords.lng },
+            coords: destCoords,
             origin: userCoords,
-            reply: `Análisis de flota para ${destinoNombre} completado.`,
+            reply: `Análisis táctico para ${destinoNombre} completado.`,
             display: { fleet: fleetData, tasa: tasaBCV },
             newSession: newSessionGenerated
         });
@@ -119,4 +119,4 @@ app.post('/api/register-identity', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`DRIVERY CORE ACTIVE`));
+app.listen(PORT, () => console.log(`DRIVERY TURBO-CORE ACTIVE`));
