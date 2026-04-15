@@ -11,147 +11,60 @@ app.use(express.json());
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
-// --- GESTIÓN DE TASA CAMBIARIA (BCV) ---
-let bcvCache = { valor: 45.10, ultimaVez: 0 };
-
-async function obtenerTasaBCV() {
-    const ahora = Date.now();
-    // Cache de 30 minutos para no saturar la API de tasas
-    if (ahora - bcvCache.ultimaVez < 1800000) return bcvCache.valor;
-    try {
-        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', { timeout: 1500 });
-        bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
-        return bcvCache.valor;
-    } catch (e) { 
-        return bcvCache.valor; // Retorna último valor conocido si falla
-    }
-}
-
-// --- AUTENTICACIÓN DE DISPOSITIVO (YUMMY CORE) ---
-async function loginFlota(id, password) {
-    try {
-        const response = await axios.post('https://admin.yummyrides.com/userslogin', {
-            "email": id,
-            "password": password,
-            "device_type": "android",
-            "login_by": "manual",
-            "device_id": "DRV-MASTER-OS",
-            "app_version": "3.12.10",
-            "country_phone_code": "+58"
-        }, { timeout: 3000 });
-        return response.data;
-    } catch (e) { 
-        return { success: false }; 
-    }
-}
-
-// --- ENDPOINT PRINCIPAL: PROCESAMIENTO DE COMANDOS ---
+// Endpoint para procesar el comando de voz e interceptar flota
 app.post('/api/command', async (req, res) => {
-    let { command, userCoords, session, credentials } = req.body;
-    let newSessionGenerated = null;
+    const { command, userCoords, session } = req.body;
 
     try {
-        // 1. Análisis de Intención (IA) y Tasa Simultánea
-        const [completion, tasaBCV] = await Promise.all([
-            groq.chat.completions.create({
-                messages: [
-                    { role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Caracas\"}." },
-                    { role: "user", content: command }
-                ],
-                model: "llama-3.3-70b-versatile",
-                response_format: { type: "json_object" }
-            }),
-            obtenerTasaBCV()
-        ]);
+        // 1. IA extrae destino
+        const completion = await groq.chat.completions.create({
+            messages: [{ role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Caracas\"}." }, { role: "user", content: command }],
+            model: "llama-3.3-70b-versatile",
+            response_format: { type: "json_object" }
+        });
 
         const destinoNombre = JSON.parse(completion.choices[0].message.content).destino;
 
-        // 2. Geocoding para coordenadas de destino
-        const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&bounds=10.40,-67.05|10.55,-66.75&key=${GOOGLE_MAPS_KEY}`;
-        const geo = await axios.get(geoUrl);
-        if (!geo.data.results[0]) throw new Error("DEST_NOT_FOUND");
-        
+        // 2. Geocoding
+        const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
         const destCoords = geo.data.results[0].geometry.location;
 
-        // 3. Intercepción de Cotización (Quotation API)
-        const solicitarQuote = async (s) => {
-            return await axios.post('https://api.yummyrides.com/api/v2/quotation', {
-                pickupLatitude: parseFloat(userCoords.lat),
-                pickupLongitude: parseFloat(userCoords.lng),
-                destinationLatitude: parseFloat(destCoords.lat),
-                destinationLongitude: parseFloat(destCoords.lng)
-            }, {
-                headers: {
-                    'Authorization': String(s.bearer),
-                    'token': String(s.token),
-                    'user_id': String(s.userId),
-                    'app_version': '3.12.10',
-                    'device_type': 'android'
-                },
-                timeout: 5000
-            });
-        };
+        // 3. Intercepción de Yummy (Quotation)
+        const quoteResponse = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
+            pickupLatitude: parseFloat(userCoords.lat), pickupLongitude: parseFloat(userCoords.lng),
+            destinationLatitude: parseFloat(destCoords.lat), destinationLongitude: parseFloat(destCoords.lng)
+        }, {
+            headers: { 'Authorization': session.bearer, 'token': session.token, 'user_id': session.userId, 'app_version': '3.12.10', 'device_type': 'android' }
+        });
 
-        let quoteResponse;
-        try {
-            quoteResponse = await solicitarQuote(session);
-        } catch (err) {
-            // Re-intento automático si la sesión expiró y tenemos credenciales
-            if (credentials) {
-                const relogin = await loginFlota(credentials.id, credentials.pass);
-                if (relogin.success) {
-                    const u = relogin.user_detail;
-                    newSessionGenerated = { bearer: `Bearer ${u.jwt}`, token: u.token, userId: u.user_id };
-                    quoteResponse = await solicitarQuote(newSessionGenerated);
-                } else { throw new Error("AUTH_EXPIRED"); }
-            } else { throw err; }
-        }
-
-        // --- EXTRACCIÓN DE TODA LA FLOTA DISPONIBLE ---
         const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
-        
         const fleetData = services.map(s => ({
-            name: s.name,
-            usd: s.estimated_fare.toFixed(2),
-            bs: (s.estimated_fare * tasaBCV).toFixed(2),
-            arrival: s.eta || "4 min"
+            id: s.id, name: s.name, usd: s.estimated_fare.toFixed(2), arrival: s.eta || "4 min"
         }));
 
-        // 4. Respuesta Maestra al Frontend
         res.json({
-            coords: { lat: parseFloat(destCoords.lat), lng: parseFloat(destCoords.lng) },
-            origin: { lat: parseFloat(userCoords.lat), lng: parseFloat(userCoords.lng) },
-            reply: `Análisis táctico para ${destinoNombre} completado. Rutas y planes sincronizados.`,
-            display: { 
-                fleet: fleetData, 
-                tasa: tasaBCV 
-            },
-            newSession: newSessionGenerated
+            destCoords, 
+            reply: `Ruta a ${destinoNombre} sincronizada. Seleccione unidad.`,
+            display: { fleet: fleetData }
         });
-
-    } catch (e) {
-        console.error("Drivery Error Core:", e.message);
-        res.status(401).json({ reply: "Sincronización de red requerida. Reintente el comando." });
-    }
+    } catch (e) { res.status(500).json({ reply: "Error de red táctica." }); }
 });
 
-// --- REGISTRO INICIAL DE IDENTIDAD ---
-app.post('/api/register-identity', async (req, res) => {
-    const { id, password } = req.body;
-    const data = await loginFlota(id, password);
-    if (data.success) {
-        const u = data.user_detail;
-        res.json({ 
-            success: true, 
-            nombre: u.first_name,
-            session: { bearer: `Bearer ${u.jwt}`, token: u.token, userId: u.user_id }
+// Endpoint para ejecutar el pedido real (Booking)
+app.post('/api/book', async (req, res) => {
+    const { serviceId, pickup, destination, paymentMode, session } = req.body;
+    try {
+        const response = await axios.post('https://api.yummyrides.com/api/v2/request_trip', {
+            "service_type_id": serviceId,
+            "pickup_latitude": pickup.lat, "pickup_longitude": pickup.lng,
+            "destination_latitude": destination.lat, "destination_longitude": destination.lng,
+            "payment_mode": paymentMode === 'wallet' ? 'cash' : paymentMode,
+            "is_scheduled": 0
+        }, {
+            headers: { 'Authorization': session.bearer, 'token': session.token, 'user_id': session.userId, 'app_version': '3.12.10', 'device_type': 'android' }
         });
-    } else { 
-        res.status(401).json({ success: false }); 
-    }
+        res.json({ success: true, reply: "Unidad confirmada. Siga el radar." });
+    } catch (e) { res.status(500).json({ success: false, reply: "Error en el despliegue." }); }
 });
 
-app.get('/ping', (req, res) => res.send('DRIVERY OS CORE: ONLINE'));
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`DRIVERY TURBO-CORE ACTIVE ON PORT ${PORT}`));
+app.listen(10000, () => console.log("DRIVERY CORE OPERATIVO"));
