@@ -84,7 +84,7 @@ app.post('/api/command', async (req, res) => {
             } else { throw err; }
         }
 
-        // --- INTERCEPCIÓN DE PLANES ---
+        // --- INTERCEPCIÓN TÁCTICA DE PLANES ---
         const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
         const fleetData = services.map(s => ({
             name: s.name,
