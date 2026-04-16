@@ -23,11 +23,10 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
-// ENDPOINT DE REGISTRO: URL Corregida para evitar NotFoundException
+// ENDPOINT DE REGISTRO: URL Corregida con prefijo /api/v2
 app.post('/api/register-identity', async (req, res) => {
     const { id, password, userAgent } = req.body;
-    // URL Corregida eliminando el prefijo duplicado según logs de NestJS
-    const YUMMY_AUTH_URL = 'https://api.yummyrides.com/v2/login'; 
+    const YUMMY_AUTH_URL = 'https://api.yummyrides.com/api/v2/login'; 
 
     try {
         const response = await axios.post(YUMMY_AUTH_URL, {
@@ -39,8 +38,7 @@ app.post('/api/register-identity', async (req, res) => {
             headers: { 
                 'Content-Type': 'application/json',
                 'User-Agent': userAgent || 'okhttp/4.9.1',
-                'X-App-Version': '3.12.10',
-                'X-Device-Type': 'android'
+                'X-App-Version': '3.12.10'
             } 
         });
 
@@ -58,7 +56,7 @@ app.post('/api/register-identity', async (req, res) => {
         console.error("DETALLE TÁCTICO DEL ERROR:", e.response?.data || e.message);
         res.status(e.response?.status || 401).json({ 
             success: false, 
-            message: e.response?.data?.message || "Fallo de sincronización MaaS" 
+            message: e.response?.data?.message || "Fallo de sincronización" 
         });
     }
 });
@@ -79,7 +77,7 @@ app.post('/api/command', async (req, res) => {
         const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
         const destCoords = geo.data.results[0].geometry.location;
 
-        const quoteResponse = await axios.post('https://api.yummyrides.com/v2/quotation', {
+        const quoteResponse = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
             pickupLatitude: parseFloat(userCoords.lat), pickupLongitude: parseFloat(userCoords.lng),
             destinationLatitude: parseFloat(destCoords.lat), destinationLongitude: parseFloat(destCoords.lng)
         }, {
@@ -99,7 +97,7 @@ app.post('/api/command', async (req, res) => {
         }));
 
         res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, display: { fleet: fleetData } });
-    } catch (e) { res.status(500).json({ reply: "Fallo en la red táctica." }); }
+    } catch (e) { res.status(500).json({ reply: "Fallo táctico." }); }
 });
 
 const PORT = process.env.PORT || 10000;
