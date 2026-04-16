@@ -61,14 +61,10 @@ app.post('/api/command', async (req, res) => {
             headers: { 'Authorization': session.bearer, 'token': session.token, 'user_id': session.userId, 'app_version': '3.12.10', 'device_type': 'android' }
         });
 
-        // FILTRADO DINÁMICO DE SERVICIOS (Evita repeticiones)
         const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
         const fleetData = services.map(s => ({
-            id: s.id, 
-            name: s.name, 
-            usd: s.estimated_fare.toFixed(2),
-            bs: (s.estimated_fare * tasa).toFixed(2), 
-            arrival: s.eta || "4 min"
+            id: s.id, name: s.name, usd: s.estimated_fare.toFixed(2),
+            bs: (s.estimated_fare * tasa).toFixed(2), arrival: s.eta || "4 min"
         }));
 
         res.json({ 
@@ -76,7 +72,7 @@ app.post('/api/command', async (req, res) => {
             reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, 
             display: { fleet: fleetData } 
         });
-    } catch (e) { res.status(500).json({ reply: "Fallo en la red Logistica, Intente de nuevo mas tarde o repita la solicitud" }); }
+    } catch (e) { res.status(500).json({ reply: "Error de red táctica." }); }
 });
 
 const PORT = process.env.PORT || 10000;
