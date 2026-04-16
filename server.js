@@ -11,8 +11,8 @@ app.use(express.json());
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
-// Gestión de Tasa BCV Real
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
+
 async function obtenerTasaBCV() {
     const ahora = Date.now();
     if (ahora - bcvCache.ultimaVez < 1800000) return bcvCache.valor; 
@@ -23,9 +23,9 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
-// ENDPOINT DE REGISTRO CON HUELLA DE DISPOSITIVO REAL
+// ENDPOINT DE REGISTRO: Captura y reenvía la identidad del dispositivo
 app.post('/api/register-identity', async (req, res) => {
-    const { id, password, userAgent } = req.body; 
+    const { id, password, userAgent } = req.body;
     try {
         const response = await axios.post('https://api.yummyrides.com/api/v2/login', {
             "user_id": id, 
@@ -35,7 +35,7 @@ app.post('/api/register-identity', async (req, res) => {
         }, { 
             headers: { 
                 'Content-Type': 'application/json',
-                'User-Agent': userAgent || 'okhttp/4.9.1', // Identidad real del hardware del usuario
+                'User-Agent': userAgent || 'okhttp/4.9.1',
                 'Accept': 'application/json'
             } 
         });
@@ -51,8 +51,11 @@ app.post('/api/register-identity', async (req, res) => {
             }
         });
     } catch (e) {
-        console.error("Fallo de Login en dispositivo:", e.response?.data || e.message);
-        res.status(401).json({ success: false, message: "Credenciales MaaS inválidas." });
+        console.error("Error en el Log de Render:", e.response?.data || e.message);
+        res.status(401).json({ 
+            success: false, 
+            message: e.response?.data?.message || "Error de acceso" 
+        });
     }
 });
 
@@ -91,7 +94,7 @@ app.post('/api/command', async (req, res) => {
             bs: (s.estimated_fare * tasa).toFixed(2), arrival: s.eta || "4 min"
         }));
 
-        res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, display: { fleet: fleetData } });
+        res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)}.`, display: { fleet: fleetData } });
     } catch (e) { res.status(500).json({ reply: "Fallo en la red táctica." }); }
 });
 
