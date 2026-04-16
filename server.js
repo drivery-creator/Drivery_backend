@@ -28,14 +28,17 @@ app.post('/api/register-identity', async (req, res) => {
     try {
         const response = await axios.post('https://api.yummyrides.com/api/v2/login', {
             "user_id": id, "password": password, "device_type": "android", "app_version": "3.12.10"
-        });
+        }, { headers: { 'Content-Type': 'application/json' } });
+
         const userData = response.data.response;
         res.json({
             success: true,
             nombre: userData.first_name,
             session: { bearer: response.headers['authorization'], token: userData.token, userId: userData.id }
         });
-    } catch (e) { res.status(401).json({ success: false }); }
+    } catch (e) {
+        res.status(401).json({ success: false, message: "Fallo de autenticación" });
+    }
 });
 
 app.post('/api/command', async (req, res) => {
@@ -67,12 +70,8 @@ app.post('/api/command', async (req, res) => {
             bs: (s.estimated_fare * tasa).toFixed(2), arrival: s.eta || "4 min"
         }));
 
-        res.json({ 
-            destCoords, 
-            reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, 
-            display: { fleet: fleetData } 
-        });
-    } catch (e) { res.status(500).json({ reply: "Error de red táctica." }); }
+        res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, display: { fleet: fleetData } });
+    } catch (e) { res.status(500).json({ reply: "Fallo en la red táctica." }); }
 });
 
 const PORT = process.env.PORT || 10000;
