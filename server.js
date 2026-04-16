@@ -11,8 +11,8 @@ app.use(express.json());
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
+// Gestión de Tasa BCV Real
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
-
 async function obtenerTasaBCV() {
     const ahora = Date.now();
     if (ahora - bcvCache.ultimaVez < 1800000) return bcvCache.valor; 
@@ -23,21 +23,36 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
+// ENDPOINT DE REGISTRO CON HUELLA DE DISPOSITIVO REAL
 app.post('/api/register-identity', async (req, res) => {
-    const { id, password } = req.body;
+    const { id, password, userAgent } = req.body; 
     try {
         const response = await axios.post('https://api.yummyrides.com/api/v2/login', {
-            "user_id": id, "password": password, "device_type": "android", "app_version": "3.12.10"
-        }, { headers: { 'Content-Type': 'application/json' } });
+            "user_id": id, 
+            "password": password, 
+            "device_type": "android", 
+            "app_version": "3.12.10"
+        }, { 
+            headers: { 
+                'Content-Type': 'application/json',
+                'User-Agent': userAgent || 'okhttp/4.9.1', // Identidad real del hardware del usuario
+                'Accept': 'application/json'
+            } 
+        });
 
         const userData = response.data.response;
         res.json({
             success: true,
             nombre: userData.first_name,
-            session: { bearer: response.headers['authorization'], token: userData.token, userId: userData.id }
+            session: { 
+                bearer: response.headers['authorization'], 
+                token: userData.token, 
+                userId: userData.id 
+            }
         });
     } catch (e) {
-        res.status(401).json({ success: false, message: "Fallo de autenticación" });
+        console.error("Fallo de Login en dispositivo:", e.response?.data || e.message);
+        res.status(401).json({ success: false, message: "Credenciales MaaS inválidas." });
     }
 });
 
@@ -61,7 +76,13 @@ app.post('/api/command', async (req, res) => {
             pickupLatitude: parseFloat(userCoords.lat), pickupLongitude: parseFloat(userCoords.lng),
             destinationLatitude: parseFloat(destCoords.lat), destinationLongitude: parseFloat(destCoords.lng)
         }, {
-            headers: { 'Authorization': session.bearer, 'token': session.token, 'user_id': session.userId, 'app_version': '3.12.10', 'device_type': 'android' }
+            headers: { 
+                'Authorization': session.bearer, 
+                'token': session.token, 
+                'user_id': session.userId, 
+                'app_version': '3.12.10', 
+                'device_type': 'android' 
+            }
         });
 
         const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
@@ -75,4 +96,4 @@ app.post('/api/command', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ON ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE`));
