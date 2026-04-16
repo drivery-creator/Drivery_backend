@@ -67,9 +67,13 @@ app.post('/api/command', async (req, res) => {
             bs: (s.estimated_fare * tasa).toFixed(2), arrival: s.eta || "4 min"
         }));
 
-        res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, display: { fleet: fleetData } });
-    } catch (e) { res.status(500).json({ reply: "Fallo en la red táctica." }); }
+        res.json({ 
+            destCoords, 
+            reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, 
+            display: { fleet: fleetData } 
+        });
+    } catch (e) { res.status(500).json({ reply: "Error de red táctica." }); }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE`));
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ON ${PORT}`));
