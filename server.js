@@ -23,51 +23,13 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
-// ENDPOINT DE REGISTRO: URL Corregida con prefijo /api/v2
-app.post('/api/register-identity', async (req, res) => {
-    const { id, password, userAgent } = req.body;
-    const YUMMY_AUTH_URL = 'https://api.yummyrides.com/api/v2/login'; 
-
-    try {
-        const response = await axios.post(YUMMY_AUTH_URL, {
-            "user_id": id, 
-            "password": password, 
-            "device_type": "android", 
-            "app_version": "3.12.10"
-        }, { 
-            headers: { 
-                'Content-Type': 'application/json',
-                'User-Agent': userAgent || 'okhttp/4.9.1',
-                'X-App-Version': '3.12.10'
-            } 
-        });
-
-        const userData = response.data.response;
-        res.json({
-            success: true,
-            nombre: userData.first_name,
-            session: { 
-                bearer: response.headers['authorization'], 
-                token: userData.token, 
-                userId: userData.id 
-            }
-        });
-    } catch (e) {
-        console.error("DETALLE TÁCTICO DEL ERROR:", e.response?.data || e.message);
-        res.status(e.response?.status || 401).json({ 
-            success: false, 
-            message: e.response?.data?.message || "Fallo de sincronización" 
-        });
-    }
-});
-
 app.post('/api/command', async (req, res) => {
-    const { command, userCoords, session } = req.body;
+    const { command, userCoords } = req.body;
     try {
         const [tasa, completion] = await Promise.all([
             obtenerTasaBCV(),
             groq.chat.completions.create({
-                messages: [{ role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Ciudad\"}." }, { role: "user", content: command }],
+                messages: [{ role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Ciudad\"}. No prose." }, { role: "user", content: command }],
                 model: "llama-3.3-70b-versatile",
                 response_format: { type: "json_object" }
             })
@@ -77,27 +39,20 @@ app.post('/api/command', async (req, res) => {
         const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
         const destCoords = geo.data.results[0].geometry.location;
 
-        const quoteResponse = await axios.post('https://api.yummyrides.com/api/v2/quotation', {
-            pickupLatitude: parseFloat(userCoords.lat), pickupLongitude: parseFloat(userCoords.lng),
-            destinationLatitude: parseFloat(destCoords.lat), destinationLongitude: parseFloat(destCoords.lng)
-        }, {
-            headers: { 
-                'Authorization': session.bearer, 
-                'token': session.token, 
-                'user_id': session.userId, 
-                'app_version': '3.12.10', 
-                'device_type': 'android' 
-            }
+        // LÓGICA DE CATEGORÍAS ÚNICAS
+        const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
+        const fleetData = [
+            { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
+            { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" },
+            { id: "premium", name: "Drivery Black", usd: (basePrice * 2.1).toFixed(2), bs: (basePrice * 2.1 * tasa).toFixed(2), eta: "8 min" }
+        ];
+
+        res.json({ 
+            destCoords, 
+            reply: `Ruta a ${destinoNombre} sincronizada. Seleccione su unidad.`, 
+            display: { fleet: fleetData } 
         });
-
-        const services = quoteResponse.data.response.trip_services[0].subcategories[0].service_types;
-        const fleetData = services.map(s => ({
-            id: s.id, name: s.name, usd: s.estimated_fare.toFixed(2),
-            bs: (s.estimated_fare * tasa).toFixed(2), arrival: s.eta || "4 min"
-        }));
-
-        res.json({ destCoords, reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)} bolívares.`, display: { fleet: fleetData } });
-    } catch (e) { res.status(500).json({ reply: "Fallo táctico." }); }
+    } catch (e) { res.status(500).json({ reply: "Error en el procesamiento de ruta." }); }
 });
 
 const PORT = process.env.PORT || 10000;
