@@ -48,11 +48,14 @@ app.post('/api/command', async (req, res) => {
 
         res.json({ 
             destCoords, 
-            reply: `Ruta a ${destinoNombre} sincronizada. Tasa B C V: ${tasa.toFixed(2)}`, 
+            reply: `Ruta a ${destinoNombre} lista. Tasa: ${tasa.toFixed(2)} Bs.`, 
             display: { fleet: fleetData } 
         });
-    } catch (e) { res.status(500).json({ reply: "Error de red táctica." }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ reply: "Fallo de conexión con el núcleo." }); 
+    }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE`));
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE - CLEAN MODE`));
