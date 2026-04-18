@@ -39,23 +39,21 @@ app.post('/api/command', async (req, res) => {
         const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
         const destCoords = geo.data.results[0].geometry.location;
 
-        const basePrice = Math.random() * (4.5 - 2.5) + 2.5;
+        // LÓGICA DE CATEGORÍAS ÚNICAS
+        const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         const fleetData = [
-            { id: "eco", name: "Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2) },
-            { id: "confort", name: "Confort", usd: (basePrice * 1.4).toFixed(2), bs: (basePrice * 1.4 * tasa).toFixed(2) },
-            { id: "black", name: "Black", usd: (basePrice * 2.2).toFixed(2), bs: (basePrice * 2.2 * tasa).toFixed(2) }
+            { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
+            { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" },
+            { id: "premium", name: "Drivery Black", usd: (basePrice * 2.1).toFixed(2), bs: (basePrice * 2.1 * tasa).toFixed(2), eta: "8 min" }
         ];
 
         res.json({ 
             destCoords, 
-            reply: `Ruta a ${destinoNombre} lista. Tasa: ${tasa.toFixed(2)} Bs.`, 
+            reply: `Ruta a ${destinoNombre} sincronizada. Seleccione su unidad.`, 
             display: { fleet: fleetData } 
         });
-    } catch (e) { 
-        console.error(e);
-        res.status(500).json({ reply: "Fallo de conexión con el núcleo." }); 
-    }
+    } catch (e) { res.status(500).json({ reply: "Error en el procesamiento de ruta." }); }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE - CLEAN MODE`));
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE`));
