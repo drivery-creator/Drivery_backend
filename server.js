@@ -41,28 +41,45 @@ app.post('/api/command', async (req, res) => {
         const result = geo.data.results[0];
         const destCoords = result.geometry.location;
 
-        // --- INYECCIÓN QUIRÚRGICA: LÓGICA USA vs VZLA ---
+        // --- LÓGICA DE COTIZACIÓN INTERNACIONAL INYECTADA ---
         let basePrice;
-        const isUSA = result.address_components.some(c => c.short_name === "US" || c.long_name === "United States");
+        const addressComponents = result.address_components;
+        const isUSA = addressComponents.some(c => c.short_name === "US");
+        const isMexico = addressComponents.some(c => c.short_name === "MX");
+        const isColombia = addressComponents.some(c => c.short_name === "CO");
 
-        if (isUSA && userCoords) {
-            // Cálculo para USA usando Distance Matrix
+        if ((isUSA || isMexico || isColombia) && userCoords) {
             const distRes = await axios.get(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${userCoords.lat},${userCoords.lng}&destinations=${destCoords.lat},${destCoords.lng}&key=${GOOGLE_MAPS_KEY}`);
             const elemento = distRes.data.rows[0].elements[0];
             
             if (elemento.status === "OK") {
-                const distMillas = (elemento.distance.value / 1609.34);
-                const tiempoMinutos = (elemento.duration.value / 60);
-                // Fórmula UberX USA 2026: Base(2.50) + Millas(1.35) + Minutos(0.28) + Fee(3.00)
-                basePrice = 2.50 + (distMillas * 1.35) + (tiempoMinutos * 0.28) + 3.00;
+                const distMetros = elemento.distance.value;
+                const tiempoSegundos = elemento.duration.value;
+                const distKm = distMetros / 1000;
+                const tiempoMin = tiempoSegundos / 60;
+
+                if (isUSA) {
+                    const distMillas = distKm * 0.621371;
+                    // Fórmula USA: Base $2.50 + $1.35/milla + $0.28/min + $3.00 Fee
+                    basePrice = 2.50 + (distMillas * 1.35) + (tiempoMin * 0.28) + 3.00;
+                } 
+                else if (isMexico) {
+                    // Fórmula México (MXN): Base 12.00 + 4.50/km + 1.80/min
+                    const precioMXN = 12.00 + (distKm * 4.50) + (tiempoMin * 1.80);
+                    basePrice = precioMXN / 18.50; // Conversión a USD
+                } 
+                else if (isColombia) {
+                    // Fórmula Colombia (COP): Base 2500 + 800/km + 200/min
+                    const precioCOP = 2500 + (distKm * 800) + (tiempoMin * 200);
+                    basePrice = precioCOP / 4000; // Conversión a USD
+                }
             } else {
-                basePrice = 15.00; // Fallback si no hay ruta terrestre clara
+                basePrice = 15.00; // Fallback internacional
             }
         } else {
-            // LÓGICA ORIGINAL PARA CARACAS
+            // Lógica original para Caracas (Precios aleatorios controlados)
             basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         }
-        // --- FIN DE INYECCIÓN ---
 
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
@@ -75,7 +92,10 @@ app.post('/api/command', async (req, res) => {
             reply: `Ruta a ${destinoNombre} sincronizada. Seleccione su unidad.`, 
             display: { fleet: fleetData } 
         });
-    } catch (e) { res.status(500).json({ reply: "Error en el procesamiento de ruta." }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ reply: "Error en el procesamiento de ruta." }); 
+    }
 });
 
 const PORT = process.env.PORT || 10000;
