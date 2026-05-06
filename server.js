@@ -37,10 +37,33 @@ app.post('/api/command', async (req, res) => {
 
         const destinoNombre = JSON.parse(completion.choices[0].message.content).destino;
         const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
-        const destCoords = geo.data.results[0].geometry.location;
+        
+        const result = geo.data.results[0];
+        const destCoords = result.geometry.location;
 
-        // LÓGICA DE CATEGORÍAS ÚNICAS
-        const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
+        // --- INYECCIÓN QUIRÚRGICA: LÓGICA USA vs VZLA ---
+        let basePrice;
+        const isUSA = result.address_components.some(c => c.short_name === "US" || c.long_name === "United States");
+
+        if (isUSA && userCoords) {
+            // Cálculo para USA usando Distance Matrix
+            const distRes = await axios.get(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${userCoords.lat},${userCoords.lng}&destinations=${destCoords.lat},${destCoords.lng}&key=${GOOGLE_MAPS_KEY}`);
+            const elemento = distRes.data.rows[0].elements[0];
+            
+            if (elemento.status === "OK") {
+                const distMillas = (elemento.distance.value / 1609.34);
+                const tiempoMinutos = (elemento.duration.value / 60);
+                // Fórmula UberX USA 2026: Base(2.50) + Millas(1.35) + Minutos(0.28) + Fee(3.00)
+                basePrice = 2.50 + (distMillas * 1.35) + (tiempoMinutos * 0.28) + 3.00;
+            } else {
+                basePrice = 15.00; // Fallback si no hay ruta terrestre clara
+            }
+        } else {
+            // LÓGICA ORIGINAL PARA CARACAS
+            basePrice = Math.random() * (5.5 - 3.0) + 3.0;
+        }
+        // --- FIN DE INYECCIÓN ---
+
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
             { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" },
