@@ -2,6 +2,9 @@ const express = require('express');
 const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
+const path = require('path');   // ◄ NUEVO: Requerido para extensiones de archivos
+const multer = require('multer'); // ◄ NUEVO: Requerido para recibir las fotos de perfil
+const fs = require('fs');       // ◄ NUEVO: Requerido para verificar carpetas en Render
 require('dotenv').config();
 
 const app = express();
@@ -10,6 +13,29 @@ app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
+
+// ==========================================
+// CONFIGURACIÓN DE MULTER (ALMACENAMIENTO)
+// ==========================================
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'uploads/'); // Guarda la foto en la carpeta /uploads del servidor
+    },
+    filename: function (req, file, cb) {
+        // Formato limpio: id_del_conductor_timestamp.jpg para evitar duplicados
+        const conductorId = req.body.conductorId || 'anonimo';
+        cb(null, `${conductorId}_${Date.now()}${path.extname(file.originalname)}`);
+    }
+});
+const upload = multer({ storage: storage });
+
+// Asegurar de forma automática que la carpeta local exista al levantar el core
+if (!fs.existsSync('uploads')) {
+    fs.mkdirSync('uploads');
+}
+
+// ◄ NUEVO: Exponer públicamente la carpeta para que Flutter cargue las fotos vía URL
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
@@ -22,6 +48,39 @@ async function obtenerTasaBCV() {
         return bcvCache.valor;
     } catch (e) { return bcvCache.valor; }
 }
+
+// ==========================================
+// NUEVO ENDPOINT: REGISTRO Y SUBIDA DE FOTO
+// ==========================================
+app.post('/api/register', upload.single('profilePic'), (req, res) => {
+    try {
+        const { conductorId } = req.body;
+        
+        if (!conductorId) {
+            return res.status(400).json({ success: false, response: "El ID del conductor es requerido." });
+        }
+
+        // Si el conductor subió una foto, generamos su ruta pública, si no, nula.
+        const fileUrl = req.file 
+            ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
+            : null;
+
+        console.log(`[DRIVERY CORE] Registro procesado. ID: ${conductorId} | Foto: ${fileUrl || 'Sin foto'}`);
+
+        // Respuesta limpia compatible con los controladores de Flutter
+        res.json({
+            success: true,
+            response: "Sistema de Drivery OS conectado y autenticado con éxito.",
+            conductor: {
+                id: conductorId,
+                profilePicUrl: fileUrl
+            }
+        });
+    } catch (e) {
+        console.error("Error en Registro:", e.message);
+        res.status(500).json({ success: false, response: "Error interno procesando el perfil." });
+    }
+});
 
 // ==========================================
 // ENDPOINT 1: PROCESAMIENTO INICIAL DE VOZ
@@ -54,14 +113,12 @@ app.post('/api/command', async (req, res) => {
 
         const destCoords = geo.data.results[0].geometry.location;
 
-        // Fallback de precios simulados (por si falla la accesibilidad)
         const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
             { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" }
         ];
 
-        // RETORNO PURIFICADO Y COMPATIBLE CON EL MAPA DE FLUTTER
         res.json({ 
             success: true,
             destCoords: {
@@ -81,7 +138,6 @@ app.post('/api/command', async (req, res) => {
 
 // ==========================================
 // ENDPOINT 2: EL CEREBRO DEL AGENTE (MANOS IA)
-// Mapea y decide acciones semánticas en Ridery o Yummy
 // ==========================================
 app.post('/api/agent/action', async (req, res) => {
     const { appActual, screenNodes, destino } = req.body;
