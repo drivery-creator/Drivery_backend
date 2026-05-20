@@ -2,9 +2,10 @@ const express = require('express');
 const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
-const path = require('path');   // ◄ NUEVO: Requerido para extensiones de archivos
-const multer = require('multer'); // ◄ NUEVO: Requerido para recibir las fotos de perfil
-const fs = require('fs');       // ◄ NUEVO: Requerido para verificar carpetas en Render
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
+const mongoose = require('mongoose'); // ◄ NUEVO: Mongoose para MongoDB
 require('dotenv').config();
 
 const app = express();
@@ -15,26 +16,41 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
 // ==========================================
-// CONFIGURACIÓN DE MULTER (ALMACENAMIENTO)
+// CONEXIÓN ESTRUCTURADA A MONGODB
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI || "TU_CADENA_DE_CONEXION_DE_ATLAS_AQUI";
+
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('► CONEXIÓN EXITOSA A MONGODB ATLAS ◄'))
+    .catch(err => console.error('❌ ERROR AL CONECTAR MONGODB:', err));
+
+// Esquema de datos para el Conductor de Drivery OS
+const ConductorSchema = new mongoose.Schema({
+    conductorId: { type: String, required: true, unique: true },
+    tokenAcceso: { type: String, required: true },
+    profilePicUrl: { type: String, default: null },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const Conductor = mongoose.model('Conductor', ConductorSchema);
+
+// ==========================================
+// CONFIGURACIÓN DE MULTER
 // ==========================================
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, 'uploads/'); // Guarda la foto en la carpeta /uploads del servidor
+        cb(null, 'uploads/');
     },
     filename: function (req, file, cb) {
-        // Formato limpio: id_del_conductor_timestamp.jpg para evitar duplicados
         const conductorId = req.body.conductorId || 'anonimo';
         cb(null, `${conductorId}_${Date.now()}${path.extname(file.originalname)}`);
     }
 });
 const upload = multer({ storage: storage });
 
-// Asegurar de forma automática que la carpeta local exista al levantar el core
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
-
-// ◄ NUEVO: Exponer públicamente la carpeta para que Flutter cargue las fotos vía URL
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
@@ -50,35 +66,44 @@ async function obtenerTasaBCV() {
 }
 
 // ==========================================
-// NUEVO ENDPOINT: REGISTRO Y SUBIDA DE FOTO
+// ENDPOINT DE REGISTRO GUARDANDO EN MONGO
 // ==========================================
-app.post('/api/register', upload.single('profilePic'), (req, res) => {
+app.post('/api/register', upload.single('profilePic'), async (req, res) => {
     try {
-        const { conductorId } = req.body;
+        const { conductorId, tokenAcceso } = req.body;
         
-        if (!conductorId) {
-            return res.status(400).json({ success: false, response: "El ID del conductor es requerido." });
+        if (!conductorId || !tokenAcceso) {
+            return res.status(400).json({ success: false, response: "El ID y el Token de acceso son obligatorios." });
         }
 
-        // Si el conductor subió una foto, generamos su ruta pública, si no, nula.
+        // Generamos la URL local/pública de la foto
         const fileUrl = req.file 
             ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
             : null;
 
-        console.log(`[DRIVERY CORE] Registro procesado. ID: ${conductorId} | Foto: ${fileUrl || 'Sin foto'}`);
+        // GUARDADO REAL EN MONGO: Si ya existe lo actualiza, si no, lo crea (Upsert)
+        const conductorGuardado = await Conductor.findOneAndUpdate(
+            { conductorId: conductorId },
+            { 
+                tokenAcceso: tokenAcceso,
+                profilePicUrl: fileUrl 
+            },
+            { new: true, upsert: true }
+        );
 
-        // Respuesta limpia compatible con los controladores de Flutter
+        console.log(`[DATABASE] Registro salvado en la nube de Mongo para ID: ${conductorGuardado.conductorId}`);
+
         res.json({
             success: true,
-            response: "Sistema de Drivery OS conectado y autenticado con éxito.",
+            response: "Sistema de Drivery OS conectado y persistido con éxito.",
             conductor: {
-                id: conductorId,
-                profilePicUrl: fileUrl
+                id: conductorGuardado.conductorId,
+                profilePicUrl: conductorGuardado.profilePicUrl
             }
         });
     } catch (e) {
-        console.error("Error en Registro:", e.message);
-        res.status(500).json({ success: false, response: "Error interno procesando el perfil." });
+        console.error("Error en Registro Base Datos:", e.message);
+        res.status(500).json({ success: false, response: "Error interno salvando credenciales." });
     }
 });
 
@@ -121,10 +146,7 @@ app.post('/api/command', async (req, res) => {
 
         res.json({ 
             success: true,
-            destCoords: {
-                lat: destCoords.lat,
-                lng: destCoords.lng
-            }, 
+            destCoords: { lat: destCoords.lat, lng: destCoords.lng }, 
             destinoPurificado: destinoNombre,
             response: `Sincronizando ruta a ${destinoNombre}. Iniciando orquestación en segundo plano.`, 
             display: { fleet: fleetData } 
