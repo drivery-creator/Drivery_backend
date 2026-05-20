@@ -61,8 +61,13 @@ app.post('/api/command', async (req, res) => {
             { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" }
         ];
 
+        // RETORNO PURIFICADO Y COMPATIBLE CON EL MAPA DE FLUTTER
         res.json({ 
-            destCoords, 
+            success: true,
+            destCoords: {
+                lat: destCoords.lat,
+                lng: destCoords.lng
+            }, 
             destinoPurificado: destinoNombre,
             response: `Sincronizando ruta a ${destinoNombre}. Iniciando orquestación en segundo plano.`, 
             display: { fleet: fleetData } 
