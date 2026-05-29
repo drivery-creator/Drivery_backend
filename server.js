@@ -12,15 +12,17 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
 // ==========================================
-// CONFIGURACIÓN DE TU API INVERSA (YUMMY)
+// CONFIGURACIÓN DE API INVERSA (YUMMY) AUTHENTICATED
 // ==========================================
-// Aquí viajan los headers y tokens interceptados que descubrimos en el scraping
-const YUMMY_API_BASE = "https://api.yummy.rides/v1"; // URL interna del backend de Yummy
+const YUMMY_API_BASE = "https://api.yummy.rides/v1"; 
+
+// Inyectamos el User Token real interceptado de la sesión activa
 const YUMMY_HEADERS = {
-    "Authorization": `Bearer ${process.env.YUMMY_USER_TOKEN}`, // Token de sesión de tu cuenta test/real
+    "Authorization": "Bearer 80d1cd24c64cc701c3609b8ea74d2d14", 
     "Content-Type": "application/json",
     "X-App-Version": "4.12.0",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile)"
+    "X-Device-Id": "android_drivery_os_core",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
 };
 
 let viajeActivo = {
