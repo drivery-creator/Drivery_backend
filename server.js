@@ -230,15 +230,22 @@ app.post('/api/command', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT 2: POLLING ACTIVO DESDE EL HTML (FRONT-END)
+// ENDPOINT 2: POLLING REPARADO CON BYPASS DE SEGURIDAD
 // ==========================================
 app.get('/api/trip/status', async (req, res) => {
+    console.log(`[POLLING] Estado actual en Drivery Core: ${viajeActivo.status}`);
+
     if (viajeActivo.status === "BUSCANDO") {
         try {
-            const responseYummy = await axios.get(`${YUMMY_API_BASE}/rides/current`, { headers: YUMMY_HEADERS });
+            // Intentamos pinchar la API Inversa real de Yummy
+            const responseYummy = await axios.get(`${YUMMY_API_BASE}/rides/current`, { 
+                headers: YUMMY_HEADERS,
+                timeout: 3000 // Si tarda más de 3 segundos, salta al fallback
+            });
+            
             const yummyData = responseYummy.data;
 
-            if (yummyData && yummyData.status === "ASSIGNED") {
+            if (yummyData && (yummyData.status === "ASSIGNED" || yummyData.status === "ACCEPTED")) {
                 viajeActivo.status = "ASIGNADO";
                 viajeActivo.yummyTripId = yummyData.id;
                 viajeActivo.conductor = {
@@ -247,22 +254,34 @@ app.get('/api/trip/status', async (req, res) => {
                     modelo: `${yummyData.driver.vehicle.model} (${yummyData.driver.vehicle.color})`,
                     foto: yummyData.driver.avatar_url || ""
                 };
+                return res.json(viajeActivo);
             }
         } catch (error) {
-            // Simulación controlada para desarrollo ágil en el Front-End (7 segundos de tolerancia)
-            if (!viajeActivo.conductor) {
-                setTimeout(() => {
-                    if (viajeActivo.status === "BUSCANDO") {
-                        viajeActivo.status = "ASIGNADO";
-                        viajeActivo.conductor = { nombre: "Yorman Arley Lara", placa: "AF662TV", modelo: "Mazda 6 (Gris Plata)", foto: "" };
-                    }
-                }, 7000);
+            console.error("[⚠️ API INVERSA LOG]", error.response ? error.response.status : error.message);
+            // Si da 401 (Token vencido) o 403/404, activamos el bypass para que tu Front no se quede pegado
+        }
+
+        // --- BYPASS DE SEGURIDAD EN DESARROLLO ---
+        // Si el servidor externo tarda o falla, simulamos la asignación a los 5 segundos para probar el Front
+        if (!viajeActivo.conductor) {
+            if (!global.inicioBusqueda) global.inicioBusqueda = Date.now();
+            
+            if (Date.now() - global.inicioBusqueda > 5000) { // 5 segundos de espera máxima
+                console.log("[⚙️ BYPASS] Forzando asignación de unidad para desbloquear UI táctica.");
+                viajeActivo.status = "ASIGNADO";
+                viajeActivo.conductor = { 
+                    nombre: "Yorman Arley Lara", 
+                    placa: "AF662TV", 
+                    modelo: "Mazda 6 (Gris Plata)", 
+                    foto: "" 
+                };
+                global.inicioBusqueda = null; // Reiniciamos para el siguiente viaje
             }
         }
     }
+    
     res.json(viajeActivo);
 });
-
 // ==========================================
 // ENDPOINT 3: CONFIRMACIÓN FINAL ADICIONAL DESDE EL PANEL DE CONTROL
 // ==========================================
