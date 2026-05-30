@@ -286,13 +286,15 @@ app.get('/api/trip/status', async (req, res) => {
 // ENDPOINT 3: CONFIRMACIÓN FINAL ADICIONAL DESDE EL PANEL DE CONTROL
 // ==========================================
 app.post('/api/trip/request', async (req, res) => {
-    try {
-        console.log(`[API INVERSA] Disparando orden final al backend externo...`);
-        // Aquí puedes forzar el commit definitivo o el disparo analítico
-        res.json({ success: true, message: "Viaje consolidado en la plataforma de destino de manera exitosa." });
-    } catch(e) {
-        res.status(500).json({ success: false, message: "Falla al ejecutar solicitud." });
-    }
+    console.log("[CORE] Inicializando nueva solicitud de viaje. Reseteando variables.");
+    global.inicioBusqueda = Date.now(); // Seteamos el tiempo cero del cronómetro en el backend
+    viajeActivo = {
+        status: "BUSCANDO",
+        destino: viajeActivo.destino || "Destino Sincronizado",
+        conductor: null,
+        yummyTripId: null
+    };
+    res.json({ success: true, message: "Búsqueda iniciada en canales remotos." });
 });
 
 const PORT = process.env.PORT || 10000;
