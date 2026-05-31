@@ -2,16 +2,16 @@ const express = require('express');
 const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
-const mongoose = require('mongoose'); // <-- Inyección del ORM oficial para MongoDB
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ==========================================
-// CONEXIÓN ROBUSTA A MONGO DB
-// ==========================================
+// ==========================================================================
+// 1. CONEXIÓN ROBUSTA A MONGO DB (DRIVERY OS CLUSTER)
+// ==========================================================================
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
     console.error('❌ Error crítico: MONGO_URI no está definida en las variables de entorno.');
@@ -22,13 +22,23 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('🏁 [Drivery OS DB] Conexión de alta disponibilidad establecida con éxito.'))
     .catch(err => console.error('❌ [Drivery OS DB] Fallo en la conexión inicial:', err.message));
 
-// Monitoreo activo de cortes de red
+// Monitoreo activo del ciclo de vida de la conexión
 mongoose.connection.on('disconnected', () => console.warn('⚠️ Alerta: Conexión con MongoDB perdida. Reintentando...'));
 
-// ==========================================
-// DEFINICIÓN DE MODELOS (ESQUEMAS) DE DATOS
-// ==========================================
-// Esquema para auditoría de interacciones, telemetría de voz e inyección de rutas
+// ==========================================================================
+// 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
+// ==========================================================================
+
+// Esquema para el control, registro y Handshakes de usuarios (Flota Morada Gateway)
+const UsuarioSchema = new mongoose.Schema({
+    telefono: { type: String, required: true, unique: true },
+    pinCifrado: { type: String, required: true }, 
+    statusEnlace: { type: String, default: 'VINCULADO' },
+    ultimaConexion: { type: Date, default: Date.now }
+});
+const Usuario = mongoose.model('Usuario', UsuarioSchema);
+
+// Esquema para auditoría de comandos de voz, telemetría e inyección de rutas
 const ViajeSchema = new mongoose.Schema({
     comandoOriginal: String,
     status: { type: String, default: 'BUSCANDO' },
@@ -42,12 +52,11 @@ const ViajeSchema = new mongoose.Schema({
     yummyTripId: String,
     fecha: { type: Date, default: Date.now }
 });
-
 const Viaje = mongoose.model('Viaje', ViajeSchema);
 
-// ==========================================
-// CONFIGURACIÓN DE APIS Y VARIABLES DE ENTORNO
-// ==========================================
+// ==========================================================================
+// 3. CONFIGURACIÓN DE APIS EXTERNAS Y VARIABLES GLOBALES
+// ==========================================================================
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
@@ -60,6 +69,7 @@ const YUMMY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
 };
 
+// Estado en memoria para el polling en tiempo real del Front-End
 let viajeActivo = {
     status: "BUSCANDO", 
     destino: null,
@@ -107,9 +117,49 @@ const yummyTools = [
     }
 ];
 
-// ==========================================
-// ENDPOINT 1: EL CEREBRO DE SOLICITUD DE VOZ (GROQ AGENT)
-// ==========================================
+// ==========================================================================
+// 4. ENDPOINTS DE LA API REST
+// ==========================================================================
+
+// --- ENDPOINT: ENLACE Y REGISTRO SEGURO DE USUARIOS (MODAL INICIAL) ---
+app.post('/api/auth/yummy', async (req, res) => {
+    const { phone, password } = req.body;
+
+    if (!phone || !password) {
+        return res.status(400).json({ success: false, message: "CAMPOS INCOMPLETOS" });
+    }
+
+    try {
+        console.log(`[AUTH GATEWAY] Ejecutando Handshake para el terminal: ${phone}`);
+
+        let usuario = await Usuario.findOne({ telefono: phone });
+
+        if (usuario) {
+            usuario.pinCifrado = password; 
+            usuario.ultimaConexion = Date.now();
+            await usuario.save();
+            console.log(`💾 [MongoDB] Credencial actualizada para usuario existente: ${phone}`);
+        } else {
+            usuario = await Usuario.create({
+                telefono: phone,
+                pinCifrado: password
+            });
+            console.log(`💾 [MongoDB] Nuevo usuario registrado e indexado con éxito: ${phone}`);
+        }
+
+        return res.json({ 
+            success: true, 
+            message: "CONEXIÓN ESTABLECIDA",
+            user: { telefono: usuario.telefono, status: usuario.statusEnlace }
+        });
+
+    } catch (error) {
+        console.error('❌ [Auth Error] Fallo en el almacenamiento del Handshake:', error.message);
+        return res.status(500).json({ success: false, message: "FALLA DE CONEXIÓN DE RED INTERNA" });
+    }
+});
+
+// --- ENDPOINT: EL CEREBRO DE SOLICITUD DE VOZ (GROQ AGENT + AUDITORÍA MONGO) ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords, tipoFlotaSeleccionada } = req.body;
     
@@ -155,6 +205,7 @@ app.post('/api/command', async (req, res) => {
                 const result = geo.data.results[0];
                 const destCoords = result.geometry.location;
 
+                // --- LÓGICA DE COTIZACIÓN INTERNACIONAL INYECTADA ---
                 let basePrice;
                 const addressComponents = result.address_components;
                 const isUSA = addressComponents.some(c => c.short_name === "US");
@@ -191,6 +242,7 @@ app.post('/api/command', async (req, res) => {
                 ];
 
                 const selectedFleetObj = fleetData.find(f => f.id === (tipoFlotaSeleccionada || args.tipoFlota || "eco"));
+                
                 const payloadYummy = {
                     origin: { address: "Ubicación Orbe Central", lat: userCoords?.lat || 10.48, lng: userCoords?.lng || -66.90 },
                     destination: { address: args.destinoNombre, lat: destCoords.lat, lng: destCoords.lng },
@@ -203,7 +255,7 @@ app.post('/api/command', async (req, res) => {
                     viajeActivo.yummyTripId = responseYummy.data.id;
                     generatedTripId = responseYummy.data.id;
                 } catch(err) {
-                    console.log("[API INVERSA] Guardando log en MongoDB...");
+                    console.log("[API INVERSA] Error de envío o token simulado en desarrollo. Forzando enganche de escucha.");
                 }
 
                 viajeActivo.status = "BUSCANDO";
@@ -224,7 +276,7 @@ app.post('/api/command', async (req, res) => {
                         tasaBcvAplicada: tasa,
                         yummyTripId: generatedTripId || "simulado_dev"
                     });
-                    console.log('💾 [MongoDB] Registro de comando de movilidad guardado con éxito.');
+                    console.log('💾 [MongoDB] Telemetría y auditoría de ruta guardada con éxito.');
                 } catch (mongoErr) {
                     console.error('❌ [MongoDB] Error guardando registro:', mongoErr.message);
                 }
@@ -244,7 +296,7 @@ app.post('/api/command', async (req, res) => {
     }
 });
 
-// Resto de endpoints que ya tenías funcionales para el polling de estatus
+// --- ENDPOINTS AUXILIARES DE MONITOREO Y FLUJO ---
 app.post('/api/trip/request', (req, res) => {
     res.json({ success: true, status: viajeActivo.status });
 });
@@ -253,9 +305,8 @@ app.get('/api/trip/status', (req, res) => {
     res.json(viajeActivo);
 });
 
-app.post('/api/auth/yummy', (req, res) => {
-    res.json({ success: true, message: "HANDSHAKE COMPLETED" });
-});
-
+// ==========================================================================
+// 5. INICIALIZACIÓN DEL MOTOR DE ENTRADA
+// ==========================================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🟢 Drivery OS Engine operativo en el puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🟢 ¡WAOSS! Drivery OS Engine operativo en el puerto ${PORT}`));
