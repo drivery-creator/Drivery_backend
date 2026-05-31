@@ -29,14 +29,28 @@ mongoose.connection.on('disconnected', () => console.warn('⚠️ Alerta: Conexi
 // 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
 // ==========================================================================
 
-// Esquema para el control, registro y Handshakes de usuarios (Flota Morada Gateway)
+// Esquema para el control, registro, Handshakes y balance real de billetera
 const UsuarioSchema = new mongoose.Schema({
     telefono: { type: String, required: true, unique: true },
     pinCifrado: { type: String, required: true }, 
     statusEnlace: { type: String, default: 'VINCULADO' },
+    balanceUsd: { type: Number, default: 0.00 }, // Monedero en dólares
+    balanceBs: { type: Number, default: 0.00 },  // Monedero en bolívares
     ultimaConexion: { type: Date, default: Date.now }
 });
 const Usuario = mongoose.model('Usuario', UsuarioSchema);
+
+// Esquema para el historial contable inmutable de recargas (Anti-Fraude)
+const TransaccionSchema = new mongoose.Schema({
+    telefonoUsuario: { type: String, required: true },
+    montoBs: { type: Number, required: true },
+    montoUsd: { type: Number, required: true },
+    referencia: { type: String, required: true, unique: true }, // Blindaje de ID único
+    bancoOrigen: { type: String, default: 'CONCILIACIÓN AUTOMÁTICA' },
+    status: { type: String, enum: ['APROBADO', 'RECHAZADO'], default: 'APROBADO' },
+    fecha: { type: Date, default: Date.now }
+});
+const Transaccion = mongoose.model('Transaccion', TransaccionSchema);
 
 // Esquema para auditoría de comandos de voz, telemetría e inyección de rutas
 const ViajeSchema = new mongoose.Schema({
@@ -85,6 +99,7 @@ async function obtenerTasaBCV() {
     try {
         const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial');
         bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
+        console.log(`💱 [BCV API] Tasa actualizada: ${bcvCache.valor} Bs/USD`);
         return bcvCache.valor;
     } catch (e) { return bcvCache.valor; }
 }
@@ -142,9 +157,11 @@ app.post('/api/auth/yummy', async (req, res) => {
         } else {
             usuario = await Usuario.create({
                 telefono: phone,
-                pinCifrado: password
+                pinCifrado: password,
+                balanceUsd: 0.00,
+                balanceBs: 0.00
             });
-            console.log(`💾 [MongoDB] Nuevo usuario registrado e indexado con éxito: ${phone}`);
+            console.log(`💾 [MongoDB] Nuevo usuario registrado con billetera indexada: ${phone}`);
         }
 
         return res.json({ 
@@ -156,6 +173,103 @@ app.post('/api/auth/yummy', async (req, res) => {
     } catch (error) {
         console.error('❌ [Auth Error] Fallo en el almacenamiento del Handshake:', error.message);
         return res.status(500).json({ success: false, message: "FALLA DE CONEXIÓN DE RED INTERNA" });
+    }
+});
+
+// --- ENDPOINT: CONSULTAR SALDO DESDE EL HEADER DE LA APP ---
+app.get('/api/wallet/balance', async (req, res) => {
+    const { phone } = req.query;
+    if (!phone) return res.status(400).json({ error: "Teléfono requerido" });
+
+    try {
+        const usuario = await Usuario.findOne({ telefono: phone });
+        if (!usuario) return res.status(404).json({ error: "Usuario no registrado" });
+        
+        return res.json({ balanceUsd: usuario.balanceUsd, balanceBs: usuario.balanceBs });
+    } catch (e) {
+        return res.status(500).json({ error: "Fallo leyendo transacciones en DB" });
+    }
+});
+
+// --- ENDPOINT: CONCILIACIÓN PROACTIVA CON NÚMERO MAESTRO SECRETO (7777) ---
+app.post('/api/wallet/verify-recharge', async (req, res) => {
+    const { phone, ref, amount } = req.body;
+
+    if (!phone || !ref || !amount) {
+        return res.status(400).json({ success: false, message: "DATOS INCOMPLETOS" });
+    }
+
+    try {
+        const usuario = await Usuario.findOne({ telefono: phone });
+        if (!usuario) return res.status(404).json({ success: false, message: "USUARIO NO REGISTRADO" });
+
+        // =========================================================================
+        // LLAVE MAESTRA ADM: BYPASS INSTANTÁNEO SOLO PARA TI (CÓDIGO: 7777)
+        // =========================================================================
+        if (ref === "7777") {
+            console.log(`🔑 [SISTEMA MAESTRO] Bypass detectado. Recargando cuenta administradora: ${phone}`);
+            
+            const tasaActual = await obtenerTasaBCV();
+            const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
+
+            usuario.balanceBs += amount;
+            usuario.balanceUsd += montoEquivalenteUsd;
+            await usuario.save();
+
+            await Transaccion.create({
+                telefonoUsuario: usuario.telefono,
+                montoBs: amount,
+                montoUsd: montoEquivalenteUsd,
+                referencia: "MASTER_BYPASS_" + Date.now().toString().slice(-4),
+                bancoOrigen: "ADMIN_COMMAND_CENTER",
+                status: 'APROBADO'
+            });
+
+            return res.json({
+                success: true,
+                montoUsd: montoEquivalenteUsd,
+                nuevoSaldoUsd: usuario.balanceUsd
+            });
+        }
+        // =========================================================================
+
+        // Bloqueo Anti-Fraude: Comprobar que nadie repita la referencia de Pago Móvil
+        const transaccionExiste = await Transaccion.findOne({ referencia: { $regex: ref + "$" } });
+        if (transaccionExiste) {
+            return res.status(400).json({ success: false, message: "ESTA REFERENCIA YA FUE COBRADA PREVIAMENTE" });
+        }
+
+        // Simulación de respuesta bancaria negativa para pruebas de rechazo (CÓDIGO: 0000)
+        if (ref === "0000") {
+            return res.status(404).json({ success: false, message: "PAGO NO ENCONTRADO EN LIQUIDACIÓN" });
+        }
+
+        // Flujo estándar aprobado para desarrollo general con cualquier otra referencia
+        const tasaActual = await obtenerTasaBCV();
+        const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
+
+        usuario.balanceBs += amount;
+        usuario.balanceUsd += montoEquivalenteUsd;
+        await usuario.save();
+
+        await Transaccion.create({
+            telefonoUsuario: usuario.telefono,
+            montoBs: amount,
+            montoUsd: montoEquivalenteUsd,
+            referencia: "REF_PROACTIVA_" + ref + "_" + Date.now().toString().slice(-4),
+            bancoOrigen: "CONCILIACIÓN EN LINEA VIA API",
+            status: 'APROBADO'
+        });
+
+        return res.json({
+            success: true,
+            montoUsd: montoEquivalenteUsd,
+            nuevoSaldoUsd: usuario.balanceUsd
+        });
+
+    } catch (error) {
+        console.error("❌ Falla crítica en pasarela de billetera:", error.message);
+        return res.status(500).json({ success: false, message: "ERROR EN RED DE CONCILIACIÓN BANCARIA" });
     }
 });
 
@@ -298,6 +412,17 @@ app.post('/api/command', async (req, res) => {
 
 // --- ENDPOINTS AUXILIARES DE MONITOREO Y FLUJO ---
 app.post('/api/trip/request', (req, res) => {
+    // Simulación de API Inversa: Al solicitar viaje real, pasamos a estado de asignación en 6 segs
+    viajeActivo.status = "BUSCANDO";
+    setTimeout(() => {
+        viajeActivo.status = "ASIGNADO";
+        viajeActivo.conductor = {
+            nombre: "Juniel Querecuto",
+            modelo: "Toyota 4Runner Limited Hybrid",
+            placa: "DRV-2026",
+            foto: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"
+        };
+    }, 6000);
     res.json({ success: true, status: viajeActivo.status });
 });
 
