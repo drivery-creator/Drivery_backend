@@ -482,6 +482,21 @@ app.post('/api/admin/accept-trip', async (req, res) => {
     }
 });
 
+// OBTENER TRANSACCIONES PENDIENTES DE REVISIÓN
+app.get('/api/admin/pending-recharges', async (req, res) => {
+    const { passwordAdmin } = req.query;
+    if (passwordAdmin !== process.env.ADMIN_PASSWORD) {
+        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
+    }
+
+    try {
+        const pendientes = await Transaccion.find({ status: 'PROCESANDO' }).sort({ fecha: -1 });
+        return res.json({ success: true, transacciones: pendientes });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 // ==========================================================================
 // 6. INICIALIZACIÓN DEL MOTOR DE ENTRADA
 // ==========================================================================
