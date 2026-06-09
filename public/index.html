@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drivery OS — Finanzas Hub</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { 
+            background: radial-gradient(circle at 50% 0%, #0c1524 0%, #05070B 70%);
+            color: #E5E7EB; 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            letter-spacing: -0.01em;
+            overflow-x: hidden;
+        }
+        /* EFECTO GLASSMORPHISM PREMIUM */
+        .glass-panel {
+            background: rgba(10, 15, 26, 0.45);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+        }
+        /* ENTRADAS DE TEXTO DE CRISTAL INTERACTIVO */
+        .glass-input {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(4px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .glass-input:focus {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.03);
+            transform: translateY(-1px);
+        }
+        /* TARJETAS DE SOLICITUDES DINÁMICAS */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid rgba(255, 255, 255, 0.02);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .glass-card:hover {
+            background: rgba(255, 255, 255, 0.03);
+            border-color: rgba(255, 255, 255, 0.08);
+            transform: scale(1.005) translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        .hidden-panel {
+            display: none !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between">
+
+    <div id="loginScreen" class="fixed inset-0 z-50 flex flex-col items-center justify-center px-4">
+        <div class="w-full max-w-md glass-panel rounded-3xl p-8 lg:p-10 space-y-8">
+            
+            <div class="flex flex-col items-center text-center space-y-4">
+                <div class="w-20 h-20 flex items-center justify-center drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">
+                    <img src="logo_app.png" alt="Drivery OS" class="w-full h-full object-contain">
+                </div>
+                <div>
+                    <h1 class="text-base font-bold tracking-[0.3em] text-white">DRIVERY OS</h1>
+                    <p class="text-[9px] text-gray-500 tracking-[0.3em] uppercase mt-1">Mesa de Control Cambiario</p>
+                </div>
+            </div>
+
+            <form id="loginForm" class="space-y-5">
+                <div>
+                    <label class="block text-[10px] text-gray-400 uppercase tracking-widest mb-2.5">Llave Maestra de Acceso</label>
+                    <input type="password" id="passwordInput" placeholder="••••••••••••" required autocomplete="current-password"
+                           class="w-full glass-input rounded-xl p-3.5 text-sm font-mono text-center text-white focus:outline-none tracking-widest">
+                </div>
+                <button type="submit" 
+                        class="w-full bg-white text-black font-semibold text-xs py-4 rounded-xl hover:bg-neutral-200 transition-all active:scale-[0.98] uppercase tracking-[0.15em] cursor-pointer shadow-lg shadow-white/5">
+                    Verificar Credenciales
+                </button>
+            </form>
+            <div id="loginError" class="text-center text-[11px] font-mono text-rose-400/90 animate-pulse hidden">
+                🔑 Llave maestra inválida. Acceso denegado.
+            </div>
+        </div>
+        <footer class="absolute bottom-8 text-[9px] text-gray-600 tracking-[0.2em] uppercase">
+            Sin margen de error • 2026
+        </footer>
+    </div>
+
+
+    <div id="mainDashboard" class="hidden-panel flex-grow flex flex-col justify-between p-6 md:p-12 lg:p-16">
+        
+        <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/[0.03] pb-8 mb-12 gap-6">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 flex items-center justify-center drop-shadow-[0_0_10px_rgba(255,255,255,0.05)]">
+                    <img src="logo_app.png" alt="Drivery OS" class="w-full h-full object-contain">
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-[0.2em] text-white">DRIVERY OS</h1>
+                    <p class="text-[10px] text-gray-500 tracking-[0.3em] uppercase mt-1">Mesa de Control Cambiario y Fondos</p>
+                </div>
+            </div>
+            
+            <div class="w-full sm:w-auto flex items-center gap-4 bg-white/[0.01] px-4 py-2.5 rounded-xl border border-white/[0.03] backdrop-blur-md">
+                <div class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                    <span class="text-[11px] text-gray-400 font-mono uppercase tracking-wider">Sesión Protegida</span>
+                </div>
+                <button onclick="cerrarSesion()" class="text-[10px] font-semibold text-rose-400/80 hover:text-rose-400 uppercase tracking-wider border-l border-white/10 pl-4 transition-colors cursor-pointer">
+                    Salir
+                </button>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start flex-grow">
+            
+            <section class="glass-panel rounded-2xl p-6 lg:p-8 space-y-6">
+                <div>
+                    <h2 class="text-sm font-semibold tracking-wider text-white uppercase">Aprobación Directa</h2>
+                    <p class="text-xs text-gray-400 mt-1">Valida un número de referencia de forma aislada.</p>
+                </div>
+
+                <form id="rechargeForm" class="space-y-5">
+                    <div>
+                        <label class="block text-[10px] text-gray-400 uppercase tracking-widest mb-2.5">Referencia de Pago Móvil</label>
+                        <input type="text" id="refInput" placeholder="Ej. 70492811" required
+                               class="w-full glass-input rounded-xl p-3.5 text-sm font-mono text-white focus:outline-none">
+                    </div>
+                    <button type="submit" 
+                            class="w-full bg-white text-black font-semibold text-xs py-4 rounded-xl hover:bg-neutral-200 transition-all active:scale-[0.99] uppercase tracking-[0.15em] cursor-pointer shadow-md">
+                        Aprobar e Inyectar Saldo
+                    </button>
+                </form>
+                <div id="rechargeStatus" class="mt-4 text-xs font-mono hidden p-3.5 rounded-xl"></div>
+            </section>
+
+            <section class="lg:col-span-2 glass-panel rounded-2xl p-6 lg:p-8 space-y-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-sm font-semibold tracking-wider text-white uppercase flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping"></span>
+                            Solicitudes entrantes en revisión
+                        </h2>
+                        <p class="text-xs text-gray-400 mt-1">Transacciones esperando verificación en la banca nacional.</p>
+                    </div>
+                    <span id="contadorPendientes" class="text-xs font-mono bg-white/[0.02] px-3 py-1 rounded-full border border-white/[0.03] text-gray-300">
+                        0 pendientes
+                    </span>
+                </div>
+
+                <div id="listaPendientes" class="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                    <div class="text-center py-12 border border-dashed border-white/[0.03] rounded-xl text-gray-500 text-xs tracking-wide">
+                        Sincronizando flujo financiero...
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <footer class="mt-16 pt-8 border-t border-white/[0.03] flex flex-col sm:flex-row justify-between text-[10px] text-gray-600 tracking-[0.2em] uppercase gap-4">
+            <div>Drivery OS Hub v3.0</div>
+            <div>Sin margen de error • 2026</div>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = "http://localhost:3000/api";
+        let tokenGlobal = "";
+        let pollingInterval = null;
+
+        // SISTEMA DE AUTENTICACIÓN LOCAL
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const password = document.getElementById('passwordInput').value;
+            const errorDiv = document.getElementById('loginError');
+
+            if (password === "drivery_master_2026") {
+                tokenGlobal = password;
+                errorDiv.classList.add('hidden');
+                
+                document.getElementById('loginScreen').classList.add('hidden-panel');
+                document.getElementById('mainDashboard').classList.remove('hidden-panel');
+                
+                document.getElementById('passwordInput').value = "";
+                inicializarPanel();
+            } else {
+                errorDiv.classList.remove('hidden');
+                document.getElementById('passwordInput').value = "";
+                document.getElementById('passwordInput').focus();
+            }
+        });
+
+        function cerrarSesion() {
+            tokenGlobal = "";
+            if (pollingInterval) clearInterval(pollingInterval);
+            document.getElementById('mainDashboard').classList.add('hidden-panel');
+            document.getElementById('loginScreen').classList.remove('hidden-panel');
+        }
+
+        function inicializarPanel() {
+            cargarSolicitudes();
+            pollingInterval = setInterval(cargarSolicitudes, 10000);
+        }
+
+        async function cargarSolicitudes() {
+            if (!tokenGlobal) return;
+            
+            const listaContainer = document.getElementById('listaPendientes');
+            const contador = document.getElementById('contadorPendientes');
+
+            try {
+                const res = await fetch(`${API_BASE}/admin/pending-recharges?passwordAdmin=${tokenGlobal}`);
+                const data = await res.json();
+
+                if (data.success && data.transacciones.length > 0) {
+                    contador.innerText = `${data.transacciones.length} pendientes`;
+                    listaContainer.innerHTML = data.transacciones.map(tx => `
+                        <div class="glass-card flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl gap-4">
+                            <div class="space-y-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-mono text-white font-medium bg-white/[0.03] px-2 py-0.5 rounded border border-white/[0.04]">Ref: ${tx.referencia}</span>
+                                    <span class="text-[10px] text-gray-400 font-mono">${tx.bancoOrigen}</span>
+                                </div>
+                                <div class="text-xs text-gray-400">Terminal: <span class="text-gray-200 font-mono">${tx.telefonoUsuario}</span></div>
+                            </div>
+                            <div class="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-6">
+                                <div class="text-right">
+                                    <div class="text-xs font-mono text-emerald-400 font-semibold">+ ${tx.montoBs.toFixed(2)} Bs</div>
+                                    <div class="text-[10px] text-gray-500 font-mono">$${tx.montoUsd.toFixed(2)} USD</div>
+                                </div>
+                                <button onclick="aprobarDesdeLista('${tx.referencia}')" 
+                                        class="bg-white/5 border border-white/10 hover:bg-white hover:text-black text-white text-[10px] font-semibold px-4 py-2 rounded-lg uppercase tracking-wider transition-all active:scale-[0.95] cursor-pointer">
+                                    Aprobar
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    contador.innerText = `0 pendientes`;
+                    listaContainer.innerHTML = `
+                        <div class="text-center py-12 border border-dashed border-white/[0.02] rounded-xl text-gray-500 text-xs tracking-wide">
+                            Ninguna solicitud entrante en el clúster.
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                console.error("Error de sincronización táctica:", err);
+            }
+        }
+
+        document.getElementById('rechargeForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const referencia = document.getElementById('refInput').value;
+            await ejecutarAprobacion(referencia);
+        });
+
+        async function aprobarDesdeLista(referencia) {
+            if(confirm(`¿Confirmar inyección de fondos para la referencia ${referencia}?`)) {
+                await ejecutarAprobacion(referencia);
+            }
+        }
+
+        async function ejecutarAprobacion(referencia) {
+            if (!tokenGlobal) return;
+            const statusDiv = document.getElementById('rechargeStatus');
+
+            statusDiv.className = "mt-4 text-xs font-mono p-3.5 rounded-xl bg-white/[0.01] text-gray-400 block border border-white/[0.03]";
+            statusDiv.innerText = "⏳ Transmitiendo aprobación al ledger corporativo...";
+
+            try {
+                const res = await fetch(`${API_BASE}/admin/approve-recharge`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ referencia, passwordAdmin: tokenGlobal })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    statusDiv.className = "mt-4 text-xs font-mono p-3.5 rounded-xl bg-emerald-500/5 text-emerald-400 block border border-emerald-500/10";
+                    statusDiv.innerText = `✅ APROBADO: Fondos liberados al usuario.`;
+                    document.getElementById('refInput').value = "";
+                    cargarSolicitudes();
+                } else {
+                    statusDiv.className = "mt-4 text-xs font-mono p-3.5 rounded-xl bg-rose-500/5 text-rose-400 block border border-rose-500/10";
+                    statusDiv.innerText = `❌ RECHAZADO: ${data.message}`;
+                }
+            } catch (err) {
+                statusDiv.className = "mt-4 text-xs font-mono p-3.5 rounded-xl bg-rose-500/5 text-rose-400 block border border-rose-500/10";
+                statusDiv.innerText = "❌ Falla de enlace con Drivery OS Engine.";
+            }
+        }
+    </script>
+</body>
+</html>
