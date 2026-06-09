@@ -29,33 +29,34 @@ mongoose.connection.on('disconnected', () => console.warn('⚠️ Alerta: Conexi
 // 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
 // ==========================================================================
 
-// Esquema para el control, registro, Handshakes y balance real de billetera
+// Esquema para el control, registro, Handshakes y balances de la API Inversa
 const UsuarioSchema = new mongoose.Schema({
     telefono: { type: String, required: true, unique: true },
-    pinCifrado: { type: String, required: true }, 
+    pinCifrado: { type: String, required: true }, // Contraseña/PIN del ecosistema externo
     statusEnlace: { type: String, default: 'VINCULADO' },
-    balanceUsd: { type: Number, default: 0.00 }, // Monedero en dólares
-    balanceBs: { type: Number, default: 0.00 },  // Monedero en bolívares
+    balanceUsd: { type: Number, default: 0.00 },   // Monedero Dinámico en USD
+    balanceBs: { type: Number, default: 0.00 },    // Monedero Dinámico en Bolívares
     ultimaConexion: { type: Date, default: Date.now }
 });
 const Usuario = mongoose.model('Usuario', UsuarioSchema);
 
-// Esquema para el historial contable inmutable de recargas (Anti-Fraude)
+// Esquema para el historial contable de recargas manuales (Anti-Fraude)
 const TransaccionSchema = new mongoose.Schema({
     telefonoUsuario: { type: String, required: true },
     montoBs: { type: Number, required: true },
     montoUsd: { type: Number, required: true },
-    referencia: { type: String, required: true, unique: true }, // Blindaje de ID único
-    bancoOrigen: { type: String, default: 'CONCILIACIÓN AUTOMÁTICA' },
-    status: { type: String, enum: ['APROBADO', 'RECHAZADO'], default: 'APROBADO' },
+    referencia: { type: String, required: true, unique: true }, // Blindaje único
+    bancoOrigen: { type: String, default: 'PAGO MÓVIL MANUAL' },
+    status: { type: String, enum: ['PROCESANDO', 'APROBADO', 'RECHAZADO'], default: 'PROCESANDO' },
     fecha: { type: Date, default: Date.now }
 });
 const Transaccion = mongoose.model('Transaccion', TransaccionSchema);
 
-// Esquema para auditoría de comandos de voz, telemetría e inyección de rutas
+// Esquema para auditoría de comandos de voz, telemetría e inyección de rutas dinámicas
 const ViajeSchema = new mongoose.Schema({
+    telefonoUsuario: { type: String, required: true },
     comandoOriginal: String,
-    status: { type: String, default: 'BUSCANDO' },
+    status: { type: String, enum: ['BUSCANDO', 'ASIGNADO', 'FINALIZADO', 'CANCELADO'], default: 'BUSCANDO' },
     destinoNombre: String,
     coordenadasDestino: { lat: Number, lng: Number },
     coordenadasUsuario: { lat: Number, lng: Number },
@@ -63,7 +64,8 @@ const ViajeSchema = new mongoose.Schema({
     precioEstimadoUsd: Number,
     precioEstimadoBs: Number,
     tasaBcvAplicada: Number,
-    yummyTripId: String,
+    yummyTripId: { type: String, required: true, unique: true }, // ID de rastreo para polling
+    datosConductor: { type: Object, default: null }, // Se inyecta dinámicamente al aceptar el viaje
     fecha: { type: Date, default: Date.now }
 });
 const Viaje = mongoose.model('Viaje', ViajeSchema);
@@ -83,14 +85,6 @@ const YUMMY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
 };
 
-// Estado en memoria para el polling en tiempo real del Front-End
-let viajeActivo = {
-    status: "BUSCANDO", 
-    destino: null,
-    conductor: null,
-    yummyTripId: null
-};
-
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
 async function obtenerTasaBCV() {
@@ -99,7 +93,7 @@ async function obtenerTasaBCV() {
     try {
         const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial');
         bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
-        console.log(`💱 [BCV API] Tasa actualizada: ${bcvCache.valor} Bs/USD`);
+        console.log(`💱 [BCV API] Tasa oficial actualizada en vivo: ${bcvCache.valor} Bs/USD`);
         return bcvCache.valor;
     } catch (e) { return bcvCache.valor; }
 }
@@ -136,7 +130,7 @@ const yummyTools = [
 // 4. ENDPOINTS DE LA API REST
 // ==========================================================================
 
-// --- ENDPOINT: ENLACE Y REGISTRO SEGURO DE USUARIOS (MODAL INICIAL) ---
+// --- ENDPOINT: ENLACE Y HANDSHAKE DINÁMICO DE CREDENCIALES (API INVERSA) ---
 app.post('/api/auth/yummy', async (req, res) => {
     const { phone, password } = req.body;
 
@@ -145,7 +139,7 @@ app.post('/api/auth/yummy', async (req, res) => {
     }
 
     try {
-        console.log(`[AUTH GATEWAY] Ejecutando Handshake para el terminal: ${phone}`);
+        console.log(`📡 [GATEWAY API INVERSA] Ejecutando Handshake para el terminal: ${phone}`);
 
         let usuario = await Usuario.findOne({ telefono: phone });
 
@@ -153,7 +147,7 @@ app.post('/api/auth/yummy', async (req, res) => {
             usuario.pinCifrado = password; 
             usuario.ultimaConexion = Date.now();
             await usuario.save();
-            console.log(`💾 [MongoDB] Credencial actualizada para usuario existente: ${phone}`);
+            console.log(`💾 [MongoDB] Conexión actualizada para usuario recurrente: ${phone}`);
         } else {
             usuario = await Usuario.create({
                 telefono: phone,
@@ -161,22 +155,27 @@ app.post('/api/auth/yummy', async (req, res) => {
                 balanceUsd: 0.00,
                 balanceBs: 0.00
             });
-            console.log(`💾 [MongoDB] Nuevo usuario registrado con billetera indexada: ${phone}`);
+            console.log(`💾 [MongoDB] Nuevo usuario registrado con éxito a través del Gateway: ${phone}`);
         }
 
         return res.json({ 
             success: true, 
-            message: "CONEXIÓN ESTABLECIDA",
-            user: { telefono: usuario.telefono, status: usuario.statusEnlace }
+            message: "CONEXIÓN ESTABLECIDA CON LA API INVERSA",
+            user: { 
+                telefono: usuario.telefono, 
+                status: usuario.statusEnlace,
+                balanceUsd: usuario.balanceUsd,
+                balanceBs: usuario.balanceBs
+            }
         });
 
     } catch (error) {
-        console.error('❌ [Auth Error] Fallo en el almacenamiento del Handshake:', error.message);
-        return res.status(500).json({ success: false, message: "FALLA DE CONEXIÓN DE RED INTERNA" });
+        console.error('❌ [Auth Error] Fallo crítico en el Gateway de Autenticación:', error.message);
+        return res.status(500).json({ success: false, message: "FALLA DE ENLACE EN LA RED INTERNA" });
     }
 });
 
-// --- ENDPOINT: CONSULTAR SALDO DESDE EL HEADER DE LA APP ---
+// --- ENDPOINT: CONSULTAR SALDO EN TIEMPO REAL DESDE EL HEADER ---
 app.get('/api/wallet/balance', async (req, res) => {
     const { phone } = req.query;
     if (!phone) return res.status(400).json({ error: "Teléfono requerido" });
@@ -187,13 +186,13 @@ app.get('/api/wallet/balance', async (req, res) => {
         
         return res.json({ balanceUsd: usuario.balanceUsd, balanceBs: usuario.balanceBs });
     } catch (e) {
-        return res.status(500).json({ error: "Fallo leyendo transacciones en DB" });
+        return res.status(500).json({ error: "Fallo leyendo el balance en base de datos" });
     }
 });
 
-// --- ENDPOINT: CONCILIACIÓN PROACTIVA CON NÚMERO MAESTRO SECRETO (7777) ---
+// --- ENDPOINT: REGISTRO DE PAGO MÓVIL MANUAL (MESA DE CONTROL + CHEAT CODE) ---
 app.post('/api/wallet/verify-recharge', async (req, res) => {
-    const { phone, ref, amount } = req.body;
+    const { phone, ref, amount, bancoOrigen } = req.body;
 
     if (!phone || !ref || !amount) {
         return res.status(400).json({ success: false, message: "DATOS INCOMPLETOS" });
@@ -207,7 +206,7 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
         // LLAVE MAESTRA ADM: BYPASS INSTANTÁNEO SOLO PARA TI (CÓDIGO: 7777)
         // =========================================================================
         if (ref === "7777") {
-            console.log(`🔑 [SISTEMA MAESTRO] Bypass detectado. Recargando cuenta administradora: ${phone}`);
+            console.log(`🔑 [SISTEMA MAESTRO] Bypass administrativo. Recarga inmediata para: ${phone}`);
             
             const tasaActual = await obtenerTasaBCV();
             const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
@@ -227,49 +226,44 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
 
             return res.json({
                 success: true,
+                bypass: true,
                 montoUsd: montoEquivalenteUsd,
-                nuevoSaldoUsd: usuario.balanceUsd
+                nuevoSaldoUsd: usuario.balanceUsd,
+                message: "CÓDIGO MAESTRO COMPLETO. SALDO INYECTADO EN BASE DE DATOS."
             });
         }
         // =========================================================================
 
-        // Bloqueo Anti-Fraude: Comprobar que nadie repita la referencia de Pago Móvil
-        const transaccionExiste = await Transaccion.findOne({ referencia: { $regex: ref + "$" } });
+        // Filtro Anti-Duplicados para evitar reenvío de la misma referencia
+        const transaccionExiste = await Transaccion.findOne({ referencia: ref });
         if (transaccionExiste) {
-            return res.status(400).json({ success: false, message: "ESTA REFERENCIA YA FUE COBRADA PREVIAMENTE" });
+            return res.status(400).json({ success: false, message: "ESTA REFERENCIA YA FUE REGISTRADA PREVIAMENTE" });
         }
 
-        // Simulación de respuesta bancaria negativa para pruebas de rechazo (CÓDIGO: 0000)
-        if (ref === "0000") {
-            return res.status(404).json({ success: false, message: "PAGO NO ENCONTRADO EN LIQUIDACIÓN" });
-        }
-
-        // Flujo estándar aprobado para desarrollo general con cualquier otra referencia
         const tasaActual = await obtenerTasaBCV();
         const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
 
-        usuario.balanceBs += amount;
-        usuario.balanceUsd += montoEquivalenteUsd;
-        await usuario.save();
-
+        // Registro de Transacción en estado PENDIENTE de revisión manual
         await Transaccion.create({
             telefonoUsuario: usuario.telefono,
             montoBs: amount,
             montoUsd: montoEquivalenteUsd,
-            referencia: "REF_PROACTIVA_" + ref + "_" + Date.now().toString().slice(-4),
-            bancoOrigen: "CONCILIACIÓN EN LINEA VIA API",
-            status: 'APROBADO'
+            referencia: ref,
+            bancoOrigen: bancoOrigen || "PAGO MÓVIL MANUAL",
+            status: 'PROCESANDO' 
         });
+
+        console.log(`📩 [MESA DE CONTROL] Nueva solicitud de recarga PENDIENTE. Ref: ${ref} | Tel: ${phone}`);
 
         return res.json({
             success: true,
-            montoUsd: montoEquivalenteUsd,
-            nuevoSaldoUsd: usuario.balanceUsd
+            bypass: false,
+            message: "PAGO REGISTRADO EN REVISIÓN. TU SALDO SE ACTUALIZARÁ EN UNOS MINUTOS."
         });
 
     } catch (error) {
-        console.error("❌ Falla crítica en pasarela de billetera:", error.message);
-        return res.status(500).json({ success: false, message: "ERROR EN RED DE CONCILIACIÓN BANCARIA" });
+        console.error("❌ Falla crítica en pasarela manual:", error.message);
+        return res.status(500).json({ success: false, message: "ERROR EN RED INTERNA DE BILLETERA" });
     }
 });
 
@@ -319,35 +313,9 @@ app.post('/api/command', async (req, res) => {
                 const result = geo.data.results[0];
                 const destCoords = result.geometry.location;
 
-                // --- LÓGICA DE COTIZACIÓN INTERNACIONAL INYECTADA ---
+                // Lógica de tarifas dinámicas geográficas
                 let basePrice;
-                const addressComponents = result.address_components;
-                const isUSA = addressComponents.some(c => c.short_name === "US");
-                const isMexico = addressComponents.some(c => c.short_name === "MX");
-                const isColombia = addressComponents.some(c => c.short_name === "CO");
-
-                if ((isUSA || isMexico || isColombia) && userCoords) {
-                    const distRes = await axios.get(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${userCoords.lat},${userCoords.lng}&destinations=${destCoords.lat},${destCoords.lng}&key=${GOOGLE_MAPS_KEY}`);
-                    const elemento = distRes.data.rows[0].elements[0];
-                    
-                    if (elemento.status === "OK") {
-                        const distKm = elemento.distance.value / 1000;
-                        const tiempoMin = elemento.duration.value / 60;
-
-                        if (isUSA) {
-                            const distMillas = distKm * 0.621371;
-                            basePrice = 2.50 + (distMillas * 1.35) + (tiempoMin * 0.28) + 3.00;
-                        } else if (isMexico) {
-                            basePrice = (12.00 + (distKm * 4.50) + (tiempoMin * 1.80)) / 18.50;
-                        } else if (isColombia) {
-                            basePrice = (2500 + (distKm * 800) + (tiempoMin * 200)) / 4000;
-                        }
-                    } else {
-                        basePrice = 15.00;
-                    }
-                } else {
-                    basePrice = Math.random() * (5.5 - 3.0) + 3.0; 
-                }
+                basePrice = Math.random() * (5.5 - 3.0) + 3.0; 
 
                 const fleetData = [
                     { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
@@ -355,49 +323,9 @@ app.post('/api/command', async (req, res) => {
                     { id: "premium", name: "Drivery Black", usd: (basePrice * 2.1).toFixed(2), bs: (basePrice * 2.1 * tasa).toFixed(2), eta: "8 min" }
                 ];
 
-                const selectedFleetObj = fleetData.find(f => f.id === (tipoFlotaSeleccionada || args.tipoFlota || "eco"));
-                
-                const payloadYummy = {
-                    origin: { address: "Ubicación Orbe Central", lat: userCoords?.lat || 10.48, lng: userCoords?.lng || -66.90 },
-                    destination: { address: args.destinoNombre, lat: destCoords.lat, lng: destCoords.lng },
-                    ride_type: tipoFlotaSeleccionada || args.tipoFlota || "eco"
-                };
-
-                let generatedTripId = null;
-                try {
-                    const responseYummy = await axios.post(`${YUMMY_API_BASE}/rides/create`, payloadYummy, { headers: YUMMY_HEADERS });
-                    viajeActivo.yummyTripId = responseYummy.data.id;
-                    generatedTripId = responseYummy.data.id;
-                } catch(err) {
-                    console.log("[API INVERSA] Error de envío o token simulado en desarrollo. Forzando enganche de escucha.");
-                }
-
-                viajeActivo.status = "BUSCANDO";
-                viajeActivo.destino = args.destinoNombre;
-                viajeActivo.conductor = null;
-
-                // PERSISTENCIA EN MONGO DB: Guardamos de forma asíncrona la telemetría del viaje solicitado
-                try {
-                    await Viaje.create({
-                        comandoOriginal: command,
-                        status: "BUSCANDO",
-                        destinoNombre: args.destinoNombre,
-                        coordenadasDestino: destCoords,
-                        coordenadasUsuario: userCoords || { lat: 10.48, lng: -66.90 },
-                        tipoFlota: tipoFlotaSeleccionada || args.tipoFlota || "eco",
-                        precioEstimadoUsd: parseFloat(selectedFleetObj ? selectedFleetObj.usd : basePrice),
-                        precioEstimadoBs: parseFloat(selectedFleetObj ? selectedFleetObj.bs : (basePrice * tasa)),
-                        tasaBcvAplicada: tasa,
-                        yummyTripId: generatedTripId || "simulado_dev"
-                    });
-                    console.log('💾 [MongoDB] Telemetría y auditoría de ruta guardada con éxito.');
-                } catch (mongoErr) {
-                    console.error('❌ [MongoDB] Error guardando registro:', mongoErr.message);
-                }
-
                 return res.json({ 
                     destCoords, 
-                    reply: `Ruta procesada hacia ${args.destinoNombre}. Elige tu categoría de flota premium en el Command Center.`, 
+                    reply: `Ruta procesada hacia ${args.destinoNombre || 'tu destino'}. Selecciona la flota en el panel táctico.`, 
                     display: { fleet: fleetData } 
                 });
             }
@@ -410,28 +338,134 @@ app.post('/api/command', async (req, res) => {
     }
 });
 
-// --- ENDPOINTS AUXILIARES DE MONITOREO Y FLUJO ---
-app.post('/api/trip/request', (req, res) => {
-    // Simulación de API Inversa: Al solicitar viaje real, pasamos a estado de asignación en 6 segs
-    viajeActivo.status = "BUSCANDO";
-    setTimeout(() => {
-        viajeActivo.status = "ASIGNADO";
-        viajeActivo.conductor = {
-            nombre: "Juniel Querecuto",
-            modelo: "Toyota 4Runner Limited Hybrid",
-            placa: "DRV-2026",
-            foto: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"
-        };
-    }, 6000);
-    res.json({ success: true, status: viajeActivo.status });
+// --- ENDPOINT: SOLICITAR VIAJE DINÁMICO EN BASE DE DATOS REAL (EL TELÉFONO PIDE) ---
+app.post('/api/trip/request', async (req, res) => {
+    const { telefonoUsuario, destinoNombre, lat, lng, precioUsd, precioBs, tipoFlota } = req.body;
+
+    if (!telefonoUsuario || !destinoNombre || !lat || !lng) {
+        return res.status(400).json({ success: false, message: "Faltan parámetros de rastreo o de usuario." });
+    }
+
+    try {
+        const nuevoViaje = await Viaje.create({
+            telefonoUsuario: telefonoUsuario,
+            comandoOriginal: `Solicitud en vivo hacia ${destinoNombre}`,
+            status: "BUSCANDO",
+            destinoNombre: destinoNombre,
+            coordenadasDestino: { lat, lng },
+            coordenadasUsuario: { lat: 10.48, lng: -66.90 }, // Caracas base por defecto
+            tipoFlota: tipoFlota || "eco",
+            precioEstimadoUsd: precioUsd || 5.00,
+            precioEstimadoBs: precioBs || 225.00,
+            tasaBcvAplicada: bcvCache.valor,
+            yummyTripId: "DRV_" + Date.now().toString().slice(-6) // ID Único de rastreo para Polling
+        });
+
+        console.log(`🚀 [VIAJES] Nuevo viaje en la calle interactuando en DB. Tracking ID: ${nuevoViaje.yummyTripId}`);
+
+        res.json({ 
+            success: true, 
+            message: "BUSCANDO CONDUCTOR EN LA ZONA EN VIVO", 
+            yummyTripId: nuevoViaje.yummyTripId 
+        });
+
+    } catch (error) {
+        console.error("❌ Error al registrar viaje dinámico:", error.message);
+        res.status(500).json({ success: false, message: "Error en el clúster de asignación" });
+    }
 });
 
-app.get('/api/trip/status', (req, res) => {
-    res.json(viajeActivo);
+// --- ENDPOINT: POLLING DINÁMICO DE ESTATUS (EL TELÉFONO INTERROGA A MONGO) ---
+app.get('/api/trip/status', async (req, res) => {
+    const { yummyTripId } = req.query;
+
+    if (!yummyTripId) {
+        return res.status(400).json({ error: "Se requiere el ID dinámico del viaje" });
+    }
+
+    try {
+        const viaje = await Viaje.findOne({ yummyTripId: yummyTripId });
+        
+        if (!viaje) {
+            return res.status(404).json({ error: "El viaje no existe o fue removido" });
+        }
+
+        return res.json({
+            status: viaje.status,
+            destino: viaje.destinoNombre,
+            yummyTripId: viaje.yummyTripId,
+            conductor: viaje.datosConductor // Retornará null si sigue BUSCANDO, o el objeto si ya fue ACEPTADO
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: "Fallo de telemetría en base de datos" });
+    }
 });
 
 // ==========================================================================
-// 5. INICIALIZACIÓN DEL MOTOR DE ENTRADA
+// 5. ENDPOINTS DE ADMINISTRACIÓN (MESA DE CONTROL MANUAL INTERACTIVA)
+// ==========================================================================
+
+// --- ADMIN CONTROL: APROBAR UN PAGO MÓVIL PENDIENTE Y SUMAR SALDO REAL ---
+app.post('/api/admin/approve-recharge', async (req, res) => {
+    const { referencia, passwordAdmin } = req.body;
+
+    if (passwordAdmin !== "drivery_master_2026") {
+        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
+    }
+
+    try {
+        const transaccion = await Transaccion.findOne({ referencia: referencia, status: 'PROCESANDO' });
+        if (!transaccion) return res.status(404).json({ success: false, message: "Transacción pendiente no encontrada" });
+
+        const usuario = await Usuario.findOne({ telefono: transaccion.telefonoUsuario });
+        if (!usuario) return res.status(404).json({ success: false, message: "Usuario dueño no encontrado" });
+
+        // Acreditamos el dinero real recopilado de tu cuenta de banco
+        usuario.balanceBs += transaccion.montoBs;
+        usuario.balanceUsd += transaccion.montoUsd;
+        await usuario.save();
+
+        transaccion.status = 'APROBADO';
+        await transaccion.save();
+
+        console.log(`✅ [MESA DE CONTROL] Saldo liberado manualmente para el usuario: ${usuario.telefono}`);
+        return res.json({ success: true, message: "SALDO ACREDITADO AL MONEDERO DEL USUARIO", nuevoSaldoUsd: usuario.balanceUsd });
+
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// --- ADMIN CONTROL: SIMULAR QUE UN CHOFER REAL TOMA LA CARRERA (DESBLOQUEO DE APP) ---
+app.post('/api/admin/accept-trip', async (req, res) => {
+    const { yummyTripId, nombreChofer, vehiculo, placa, fotoUrl } = req.body;
+
+    try {
+        const viaje = await Viaje.findOne({ yummyTripId: yummyTripId, status: "BUSCANDO" });
+        if (!viaje) return res.status(404).json({ success: false, message: "Viaje ocupado, cancelado o inexistente" });
+
+        // Inyección dinámica de metadatos del Conductor
+        viaje.status = "ASIGNADO";
+        viaje.datosConductor = {
+            nombre: nombreChofer || "Juniel Querecuto",
+            modelo: vehiculo || "Toyota 4Runner Limited Hybrid",
+            placa: placa || "DRV-2026",
+            foto: fotoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"
+        };
+
+        await viaje.save();
+        console.log(`🎯 [VIAJES] El conductor ${viaje.datosConductor.nombre} tomó dinámicamente el viaje ${yummyTripId}`);
+
+        return res.json({ success: true, message: "EL VIAJE CAMBIÓ A ESTADO ASIGNADO CORRECTAMENTE" });
+
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// ==========================================================================
+// 6. INICIALIZACIÓN DEL MOTOR DE ENTRADA
 // ==========================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🟢 ¡WAOSS! Drivery OS Engine operativo en el puerto ${PORT}`));
