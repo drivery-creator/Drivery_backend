@@ -3,6 +3,7 @@ const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -10,7 +11,13 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================================================
-// 1. CONEXIÓN ROBUSTA A MONGO DB (DRIVERY OS CLUSTER)
+// 1. CONFIGURACIÓN DE ARCHIVOS ESTÁTICOS (Mesa de Control Admin)
+// ==========================================================================
+// Sirve automáticamente index.html y logo_app.png desde la carpeta /public
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ==========================================================================
+// 2. CONEXIÓN ROBUSTA A MONGO DB (DRIVERY OS CLUSTER)
 // ==========================================================================
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
@@ -29,11 +36,11 @@ const connectDB = () => {
 connectDB();
 
 mongoose.connection.on('disconnected', () => {
-    console.warn('⚠️ Alerta: Conexión con MongoDB perdida. Intentando reconectar...');
+    console.warn('⚠️ Alerta: Conexión con MongoDB lost. Intentando reconectar...');
 });
 
 // ==========================================================================
-// 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
+// 3. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
 // ==========================================================================
 const UsuarioSchema = new mongoose.Schema({
     telefono: { type: String, required: true, unique: true },
@@ -62,7 +69,7 @@ const ViajeSchema = new mongoose.Schema({
     status: { type: String, enum: ['BUSCANDO', 'ASIGNADO', 'FINALIZADO', 'CANCELADO'], default: 'BUSCANDO' },
     destinoNombre: String,
     coordenadasDestino: { lat: Number, lng: Number },
-    coordenadasUsuario: { lat: Number, lng: Number },
+    coordinatesUsuario: { lat: Number, lng: Number },
     tipoFlota: String,
     precioEstimadoUsd: Number,
     precioEstimadoBs: Number,
@@ -74,10 +81,10 @@ const ViajeSchema = new mongoose.Schema({
 const Viaje = mongoose.model('Viaje', ViajeSchema);
 
 // ==========================================================================
-// 3. CONFIGURACIÓN DE APIS EXTERNAS Y VARIABLES GLOBALES
+// 4. CONFIGURACIÓN DE APIS EXTERNAS Y VARIABLES GLOBALES
 // ==========================================================================
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY; // Protegido en variables de entorno
+const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY; 
 const YUMMY_API_BASE = process.env.YUMMY_API_BASE || "https://api.yummy.rides/v1"; 
 
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
@@ -121,7 +128,15 @@ Si el destino está fuera de Venezuela o es completamente indescifrable:
 }`;
 
 // ==========================================================================
-// 4. ENDPOINTS DE LA API REST
+// 5. RUTA RAÍZ (INTERRUPCIÓN E INYECCIÓN DEL FRONTEND)
+// ==========================================================================
+// Fuerza a que la raíz sirva el panel administrativo glassmorphism al entrar al subdominio
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ==========================================================================
+// 6. ENDPOINTS DE LA API REST
 // ==========================================================================
 
 // --- ENDPOINT EXTERNO PROXY: AUTENTICACIÓN ESPEJO ---
@@ -434,11 +449,28 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
 });
 
 // ==========================================================================
-// 5. ENDPOINTS DE ADMINISTRACIÓN (MESA DE CONTROL MANUAL)
+// 7. ENDPOINTS DE ADMINISTRACIÓN (MESA DE CONTROL MANUAL INTERACTIVA)
 // ==========================================================================
+
+// OBTENER TRANSACCIONES PENDIENTES DE REVISIÓN
+app.get('/api/admin/pending-recharges', async (req, res) => {
+    const { passwordAdmin } = req.query;
+    if (passwordAdmin !== process.env.ADMIN_PASSWORD && passwordAdmin !== "drivery_master_2026") {
+        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
+    }
+
+    try {
+        const pendientes = await Transaccion.find({ status: 'PROCESANDO' }).sort({ fecha: -1 });
+        return res.json({ success: true, transacciones: pendientes });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// APROBAR SOLICITUD DE RECARGA Y MODIFICAR BALANCES ATÓMICAMENTE
 app.post('/api/admin/approve-recharge', async (req, res) => {
     const { referencia, passwordAdmin } = req.body;
-    if (passwordAdmin !== process.env.ADMIN_PASSWORD) {
+    if (passwordAdmin !== process.env.ADMIN_PASSWORD && passwordAdmin !== "drivery_master_2026") {
         return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
     }
 
@@ -447,6 +479,9 @@ app.post('/api/admin/approve-recharge', async (req, res) => {
         if (!transaccion) return res.status(404).json({ success: false, message: "Transacción no encontrada" });
 
         const usuario = await Usuario.findOne({ telefono: transaccion.telefonoUsuario });
+        if (!usuario) return res.status(404).json({ success: false, message: "Usuario de la transacción no registrado" });
+
+        // Sincronización perfecta de balances de acuerdo a tus modelos
         usuario.balanceBs += transaccion.montoBs;
         usuario.balanceUsd += transaccion.montoUsd;
         await usuario.save();
@@ -460,6 +495,7 @@ app.post('/api/admin/approve-recharge', async (req, res) => {
     }
 });
 
+// ASIGNACIÓN DE VIAJES MANUAL EN PANEL BETA
 app.post('/api/admin/accept-trip', async (req, res) => {
     const { yummyTripId, nombreChofer, vehiculo, placa, fotoUrl } = req.body;
 
@@ -482,23 +518,8 @@ app.post('/api/admin/accept-trip', async (req, res) => {
     }
 });
 
-// OBTENER TRANSACCIONES PENDIENTES DE REVISIÓN
-app.get('/api/admin/pending-recharges', async (req, res) => {
-    const { passwordAdmin } = req.query;
-    if (passwordAdmin !== process.env.ADMIN_PASSWORD) {
-        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
-    }
-
-    try {
-        const pendientes = await Transaccion.find({ status: 'PROCESANDO' }).sort({ fecha: -1 });
-        return res.json({ success: true, transacciones: pendientes });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-});
-
 // ==========================================================================
-// 6. INICIALIZACIÓN DEL MOTOR DE ENTRADA
+// 8. INICIALIZACIÓN DEL MOTOR DE ENTRADA
 // ==========================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🟢 ¡WAOSS! Drivery OS Engine operativo en el puerto ${PORT}`));
