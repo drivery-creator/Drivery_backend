@@ -22,37 +22,32 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('🏁 [Drivery OS DB] Conexión de alta disponibilidad establecida con éxito.'))
     .catch(err => console.error('❌ [Drivery OS DB] Fallo en la conexión inicial:', err.message));
 
-// Monitoreo activo del ciclo de vida de la conexión
 mongoose.connection.on('disconnected', () => console.warn('⚠️ Alerta: Conexión con MongoDB perdida. Reintentando...'));
 
 // ==========================================================================
 // 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
 // ==========================================================================
-
-// Esquema para el control, registro, Handshakes y balances de la API Inversa
 const UsuarioSchema = new mongoose.Schema({
     telefono: { type: String, required: true, unique: true },
-    pinCifrado: { type: String, required: true }, // Contraseña/PIN del ecosistema externo
+    pinCifrado: { type: String, required: true }, 
     statusEnlace: { type: String, default: 'VINCULADO' },
-    balanceUsd: { type: Number, default: 0.00 },   // Monedero Dinámico en USD
-    balanceBs: { type: Number, default: 0.00 },    // Monedero Dinámico en Bolívares
+    balanceUsd: { type: Number, default: 0.00 },   
+    balanceBs: { type: Number, default: 0.00 },    
     ultimaConexion: { type: Date, default: Date.now }
 });
 const Usuario = mongoose.model('Usuario', UsuarioSchema);
 
-// Esquema para el historial contable de recargas manuales (Anti-Fraude)
 const TransaccionSchema = new mongoose.Schema({
     telefonoUsuario: { type: String, required: true },
     montoBs: { type: Number, required: true },
     montoUsd: { type: Number, required: true },
-    referencia: { type: String, required: true, unique: true }, // Blindaje único
+    referencia: { type: String, required: true, unique: true }, 
     bancoOrigen: { type: String, default: 'PAGO MÓVIL MANUAL' },
     status: { type: String, enum: ['PROCESANDO', 'APROBADO', 'RECHAZADO'], default: 'PROCESANDO' },
     fecha: { type: Date, default: Date.now }
 });
 const Transaccion = mongoose.model('Transaccion', TransaccionSchema);
 
-// Esquema para auditoría de comandos de voz, telemetría e inyección de rutas dinámicas
 const ViajeSchema = new mongoose.Schema({
     telefonoUsuario: { type: String, required: true },
     comandoOriginal: String,
@@ -64,8 +59,8 @@ const ViajeSchema = new mongoose.Schema({
     precioEstimadoUsd: Number,
     precioEstimadoBs: Number,
     tasaBcvAplicada: Number,
-    yummyTripId: { type: String, required: true, unique: true }, // ID de rastreo para polling
-    datosConductor: { type: Object, default: null }, // Se inyecta dinámicamente al aceptar el viaje
+    yummyTripId: { type: String, required: true, unique: true }, 
+    datosConductor: { type: Object, default: null }, 
     fecha: { type: Date, default: Date.now }
 });
 const Viaje = mongoose.model('Viaje', ViajeSchema);
@@ -77,13 +72,6 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 
 const YUMMY_API_BASE = "https://api.yummy.rides/v1"; 
-const YUMMY_HEADERS = {
-    "Authorization": "Bearer 80d1cd24c64cc701c3609b8ea74d2d14", 
-    "Content-Type": "application/json",
-    "X-App-Version": "4.12.0",
-    "X-Device-Id": "android_drivery_os_core",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
-};
 
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
@@ -98,40 +86,35 @@ async function obtenerTasaBCV() {
     } catch (e) { return bcvCache.valor; }
 }
 
-const yummyTools = [
-    {
-        type: "function",
-        function: {
-            name: "crearViajeYummy",
-            description: "Dispara de forma autónoma una solicitud de viaje real en el backend externo a través de la API inversa raspada.",
-            parameters: {
-                type: "object",
-                properties: {
-                    destinoNombre: { type: "string", description: "Nombre purificado del lugar de destino." },
-                    lat: { type: "number", description: "Latitud geográfica del destino." },
-                    lng: { type: "number", description: "Longitud geográfica del destino." },
-                    tipoFlota: { type: "string", enum: ["eco", "confort", "premium"], description: "Categoría del carro seleccionado." }
-                },
-                required: ["destinoNombre", "lat", "lng", "tipoFlota"]
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "consultarStatusYummy",
-            description: "Interroga el endpoint secreto de Yummy para verificar si un conductor ya tomó el viaje y extraer sus datos (placa, nombre, etc).",
-            parameters: { type: "object", properties: {} }
-        }
-    }
-];
+// System Prompt blindado para restringir la inteligencia artificial única y exclusivamente a Venezuela
+const SYSTEM_PROMPT_DRIVERY = `Eres el núcleo de Inteligencia Artificial de Drivery OS, un orquestador táctico de movilidad premium para Venezuela. Tu única función es procesar comandos de voz de usuarios que desean transportarse y extraer coordenadas geográficas precisas.
+
+RESTRICCIONES GEOGRÁFICAS STRICTAS (POLÍTICA SIN MARGEN DE ERROR):
+1. Cualquier dirección, punto de interés, local comercial, avenida, urbanización o municipio dictado por el usuario DEBE ser interpretado, buscado y geolocalizado ÚNICAMENTE dentro del territorio de la República Bolivariana de Venezuela (Priorizando el área metropolitana de Caracas, Miranda y estados del país).
+2. Si el usuario menciona un lugar genérico (ej. "Las Mercedes", "El Hatillo", "Chacao", "CCCT", "Plaza Altamira", "La Candelaria", "San Román", "Sambil"), asume por defecto y de manera obligatoria su ubicación real en Caracas, Venezuela. Añade siempre ", Venezuela" al final de la búsqueda interna.
+3. Si el usuario intenta dictar una ruta o destino fuera de Venezuela (ej. "llévame a Miami", "vuelo a Madrid" o "viaje a Bogotá"), debes detectar que está fuera de los límites y denegar la solicitud con un tono premium, sofisticado y sutil, indicando que la flota opera exclusivamente en el espacio terrestre nacional.
+
+FORMATO OBLIGATORIO DE RESPUESTA (JSON PURO):
+Debes analizar el texto y responder exclusivamente en este formato JSON, sin textos introductorios, código Markdown ni explicaciones fuera del objeto:
+{
+  "success": true,
+  "reply": "Entendido. Sincronizando unidad hacia [Nombre del Lugar Limpio], Caracas.",
+  "destinoProcesado": "[Nombre del Lugar Limpio], Caracas, Venezuela"
+}
+
+Si el destino está fuera de Venezuela o es completamente indescifrable:
+{
+  "success": false,
+  "reply": "Comando fuera de la zona de cobertura de la flota nacional. Por favor indique un destino válido en Venezuela.",
+  "destinoProcesado": null
+}`;
 
 // ==========================================================================
 // 4. ENDPOINTS DE LA API REST
 // ==========================================================================
 
-// --- ENDPOINT: ENLACE Y HANDSHAKE DINÁMICO DE CREDENCIALES (API INVERSA) ---
-app.post('/api/auth/yummy', async (req, res) => {
+// --- ENDPOINT EXTERNO PROXY: AUTENTICACIÓN ESPEJO ---
+app.post('/api/auth/external', async (req, res) => {
     const { phone, password } = req.body;
 
     if (!phone || !password) {
@@ -139,15 +122,30 @@ app.post('/api/auth/yummy', async (req, res) => {
     }
 
     try {
-        console.log(`📡 [GATEWAY API INVERSA] Ejecutando Handshake para el terminal: ${phone}`);
+        console.log(`📡 [PROXY GATEWAY] Handshake externo para terminal: ${phone}`);
 
+        // Autenticación por raspado contra el endpoint real de la plataforma externa
+        const respuestaExterna = await axios.post(`${YUMMY_API_BASE}/auth/login`, {
+            phone_number: phone,
+            pin: password,
+            device_type: "android"
+        }, {
+            headers: {
+                "Content-Type": "application/json",
+                "X-App-Version": "4.12.0",
+                "X-Device-Id": "android_drivery_os_core",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
+            }
+        });
+
+        const tokenReal = respuestaExterna.data.token || respuestaExterna.data.accessToken;
+
+        // Persistimos o actualizamos localmente la cuenta en el clúster MongoDB
         let usuario = await Usuario.findOne({ telefono: phone });
-
         if (usuario) {
-            usuario.pinCifrado = password; 
+            usuario.pinCifrado = password;
             usuario.ultimaConexion = Date.now();
             await usuario.save();
-            console.log(`💾 [MongoDB] Conexión actualizada para usuario recurrente: ${phone}`);
         } else {
             usuario = await Usuario.create({
                 telefono: phone,
@@ -155,27 +153,202 @@ app.post('/api/auth/yummy', async (req, res) => {
                 balanceUsd: 0.00,
                 balanceBs: 0.00
             });
-            console.log(`💾 [MongoDB] Nuevo usuario registrado con éxito a través del Gateway: ${phone}`);
         }
 
         return res.json({ 
             success: true, 
-            message: "CONEXIÓN ESTABLECIDA CON LA API INVERSA",
-            user: { 
-                telefono: usuario.telefono, 
-                status: usuario.statusEnlace,
-                balanceUsd: usuario.balanceUsd,
-                balanceBs: usuario.balanceBs
-            }
+            tokenExterno: tokenReal,
+            message: "SESIÓN ESPEJADA CON ÉXITO",
+            user: { telefono: usuario.telefono, balanceUsd: usuario.balanceUsd }
         });
 
     } catch (error) {
-        console.error('❌ [Auth Error] Fallo crítico en el Gateway de Autenticación:', error.message);
-        return res.status(500).json({ success: false, message: "FALLA DE ENLACE EN LA RED INTERNA" });
+        console.error('❌ [Proxy Auth Error] Fallo al espejar sesión remota:', error.message);
+        return res.status(401).json({ success: false, message: "FALLA DE AUTENTICACIÓN EN LA CUENTA EXTERNA" });
     }
 });
 
-// --- ENDPOINT: CONSULTAR SALDO EN TIEMPO REAL DESDE EL HEADER ---
+// --- ENDPOINT: EL CEREBRO DE VOZ (VENEZOLANIZADO + CÁLCULO DE DISTANCIA REAL) ---
+app.post('/api/command', async (req, res) => {
+    const { command, userCoords } = req.body;
+    
+    if (!command) {
+        return res.status(400).json({ reply: "Comando inválido o vacío." });
+    }
+
+    // Ubicación de anclaje base si el dispositivo no transmite telemetría (CCCT, Caracas)
+    const baseCoords = userCoords && userCoords.lat ? userCoords : { lat: 10.4806, lng: -66.9036 };
+
+    try {
+        const tasa = await obtenerTasaBCV();
+
+        // Llamada limpia a Groq estructurando la restricción venezolana
+        const responseIA = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: [
+                { role: "system", content: SYSTEM_PROMPT_DRIVERY },
+                { role: "user", content: command }
+            ],
+            response_format: { type: "json_object" }
+        });
+
+        const aiResult = JSON.parse(responseIA.choices[0].message.content);
+
+        // Si la IA determinó que el destino está fuera de cobertura geográfica nacional
+        if (!aiResult.success || !aiResult.destinoProcesado) {
+            return res.json({ reply: aiResult.reply, destCoords: null });
+        }
+
+        // Ejecutamos la geolocalización forzando los términos hacia el mapa de Venezuela
+        const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(aiResult.destinoProcesado)}&key=${GOOGLE_MAPS_KEY}`;
+        const geo = await axios.get(geoUrl);
+        
+        if (!geo.data.results || geo.data.results.length === 0) {
+            return res.json({ reply: `No logré ubicar "${aiResult.destinoProcesado}" en la cartografía nacional.` });
+        }
+
+        const result = geo.data.results[0];
+        const destCoords = result.geometry.location;
+
+        // --- CÁLCULO MATEO-MÉTRICO DE DISTANCIA REAL (Evita el Math.random de tarifas) ---
+        // Usamos la API de Distance Matrix para saber los kilómetros reales en la vía de Caracas
+        let distanciaKm = 5.0; // Respaldo base de 5 Km si la sub-api falla
+        try {
+            const distanceUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${baseCoords.lat},${baseCoords.lng}&destinations=${destCoords.lat},${destCoords.lng}&key=${GOOGLE_MAPS_KEY}`;
+            const distRes = await axios.get(distanceUrl);
+            if (distRes.data.rows[0].elements[0].status === "OK") {
+                distanciaKm = distRes.data.rows[0].elements[0].distance.value / 1000;
+            }
+        } catch (errDistance) {
+            console.warn("Alerta: Usando telemetría analítica de distancia lineal.");
+        }
+
+        // Algoritmo de precios ajustado al mercado real caraqueño ($2.00 fijos de arranque + $0.75 por Km)
+        let precioBaseUsd = 2.00 + (distanciaKm * 0.75);
+        if (precioBaseUsd < 3.00) precioBaseUsd = 3.00; // Tarifa mínima del mercado
+
+        const fleetData = [
+            { id: "eco", name: "Drivery Eco", usd: precioBaseUsd.toFixed(2), bs: (precioBaseUsd * tasa).toFixed(2), eta: "3 min" },
+            { id: "confort", name: "Drivery Confort", usd: (precioBaseUsd * 1.30).toFixed(2), bs: (precioBaseUsd * 1.30 * tasa).toFixed(2), eta: "5 min" },
+            { id: "premium", name: "Drivery Black", usd: (precioBaseUsd * 2.00).toFixed(2), bs: (precioBaseUsd * 2.00 * tasa).toFixed(2), eta: "7 min" }
+        ];
+
+        return res.json({ 
+            destCoords, 
+            reply: aiResult.reply, 
+            destinoNombre: aiResult.destinoProcesado.replace(", Venezuela", ""),
+            display: { fleet: fleetData } 
+        });
+
+    } catch(e) { 
+        console.error("Fallo crítico en el procesador analítico:", e);
+        res.status(500).json({ reply: "Error interno en los servidores de Drivery OS." }); 
+    }
+});
+
+// --- ENDPOINT PROXY: EXTRACTOR Y ESPEJO DE TARIFAS REALES DESDE EL BACKEND ---
+app.post('/api/trip/quote-real', async (req, res) => {
+    const { token, origin, dest } = req.body;
+
+    if (!token || !origin || !dest) {
+        return res.status(400).json({ success: false, message: "Faltan parámetros tácticos de ruta." });
+    }
+
+    try {
+        const tasa = await obtenerTasaBCV();
+
+        // Petición por Proxy usando el token activo del usuario hacia las rutas externas
+        const respuestaCotizacion = await axios.post(`${YUMMY_API_BASE}/trips/quote`, {
+            pickup_lat: origin.lat,
+            pickup_lng: origin.lng,
+            dropoff_lat: dest.lat,
+            dropoff_lng: dest.lng
+        }, {
+            headers: { 
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            }
+        });
+
+        const serviciosExternos = respuestaCotizacion.data.services || [];
+        
+        // Sincronizamos las tarjetas de la Flota Web mapeando los precios reales recopilados
+        const fleetMapped = serviciosExternos.map(serv => {
+            const precioUsd = parseFloat(serv.price_usd || serv.price || 0);
+            return {
+                id: serv.id || "eco",
+                name: serv.name === "Rides" ? "Drivery Eco" : `Drivery ${serv.name}`,
+                usd: precioUsd.toFixed(2),
+                bs: (precioUsd * tasa).toFixed(2),
+                eta: serv.eta || "4 min"
+            };
+        });
+
+        if (fleetMapped.length === 0) throw new Error("Estructura externa modificada.");
+
+        return res.json({ success: true, fleet: fleetMapped });
+
+    } catch (error) {
+        console.error("Fallo en la cotización proxy externa:", error.message);
+        return res.status(400).json({ success: false, message: "No se pudieron recuperar las tarifas reales." });
+    }
+});
+
+// --- ENDPOINT: SOLICITAR VIAJE EN LA BBDD LOCAL ---
+app.post('/api/trip/request', async (req, res) => {
+    const { telefonoUsuario, destinoNombre, lat, lng, precioUsd, precioBs, tipoFlota } = req.body;
+
+    if (!telefonoUsuario || !destinoNombre || !lat || !lng) {
+        return res.status(400).json({ success: false, message: "Faltan parámetros de rastreo." });
+    }
+
+    try {
+        const nuevoViaje = await Viaje.create({
+            telefonoUsuario: telefonoUsuario,
+            comandoOriginal: `Solicitud en vivo hacia ${destinoNombre}`,
+            status: "BUSCANDO",
+            destinoNombre: destinoNombre,
+            coordenadasDestino: { lat, lng },
+            coordenadasUsuario: { lat: 10.4806, lng: -66.9036 }, 
+            tipoFlota: tipoFlota || "eco",
+            precioEstimadoUsd: precioUsd || 4.00,
+            precioEstimadoBs: precioBs || 180.00,
+            tasaBcvAplicada: bcvCache.valor,
+            yummyTripId: "DRV_" + Date.now().toString().slice(-6) 
+        });
+
+        res.json({ 
+            success: true, 
+            message: "BUSCANDO CONDUCTOR EN LA ZONA EN VIVO", 
+            yummyTripId: nuevoViaje.yummyTripId 
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Error en el clúster de asignación" });
+    }
+});
+
+// --- ENDPOINT: POLLING DE ESTATUS ---
+app.get('/api/trip/status', async (req, res) => {
+    const { yummyTripId } = req.query;
+    if (!yummyTripId) return res.status(400).json({ error: "Se requiere ID de viaje" });
+
+    try {
+        const viaje = await Viaje.findOne({ yummyTripId: yummyTripId });
+        if (!viaje) return res.status(404).json({ error: "El viaje no existe" });
+
+        return res.json({
+            status: viaje.status,
+            destino: viaje.destinoNombre,
+            yummyTripId: viaje.yummyTripId,
+            conductor: viaje.datosConductor 
+        });
+    } catch (error) {
+        res.status(500).json({ error: "Fallo de telemetría." });
+    }
+});
+
+// --- ENDPOINT: CONSULTAR SALDO ---
 app.get('/api/wallet/balance', async (req, res) => {
     const { phone } = req.query;
     if (!phone) return res.status(400).json({ error: "Teléfono requerido" });
@@ -183,14 +356,13 @@ app.get('/api/wallet/balance', async (req, res) => {
     try {
         const usuario = await Usuario.findOne({ telefono: phone });
         if (!usuario) return res.status(404).json({ error: "Usuario no registrado" });
-        
         return res.json({ balanceUsd: usuario.balanceUsd, balanceBs: usuario.balanceBs });
     } catch (e) {
-        return res.status(500).json({ error: "Fallo leyendo el balance en base de datos" });
+        return res.status(500).json({ error: "Fallo leyendo base de datos" });
     }
 });
 
-// --- ENDPOINT: REGISTRO DE PAGO MÓVIL MANUAL (MESA DE CONTROL + CHEAT CODE) ---
+// --- ENDPOINT: REGISTRO DE PAGO MÓVIL MANUAL (BYPASS: 7777) ---
 app.post('/api/wallet/verify-recharge', async (req, res) => {
     const { phone, ref, amount, bancoOrigen } = req.body;
 
@@ -202,12 +374,7 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
         const usuario = await Usuario.findOne({ telefono: phone });
         if (!usuario) return res.status(404).json({ success: false, message: "USUARIO NO REGISTRADO" });
 
-        // =========================================================================
-        // LLAVE MAESTRA ADM: BYPASS INSTANTÁNEO SOLO PARA TI (CÓDIGO: 7777)
-        // =========================================================================
         if (ref === "7777") {
-            console.log(`🔑 [SISTEMA MAESTRO] Bypass administrativo. Recarga inmediata para: ${phone}`);
-            
             const tasaActual = await obtenerTasaBCV();
             const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
 
@@ -229,12 +396,10 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
                 bypass: true,
                 montoUsd: montoEquivalenteUsd,
                 nuevoSaldoUsd: usuario.balanceUsd,
-                message: "CÓDIGO MAESTRO COMPLETO. SALDO INYECTADO EN BASE DE DATOS."
+                message: "MASTER BYPASS COMPLETE. SALDO INYECTADO."
             });
         }
-        // =========================================================================
 
-        // Filtro Anti-Duplicados para evitar reenvío de la misma referencia
         const transaccionExiste = await Transaccion.findOne({ referencia: ref });
         if (transaccionExiste) {
             return res.status(400).json({ success: false, message: "ESTA REFERENCIA YA FUE REGISTRADA PREVIAMENTE" });
@@ -243,7 +408,6 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
         const tasaActual = await obtenerTasaBCV();
         const montoEquivalenteUsd = parseFloat((amount / tasaActual).toFixed(2));
 
-        // Registro de Transacción en estado PENDIENTE de revisión manual
         await Transaccion.create({
             telefonoUsuario: usuario.telefono,
             montoBs: amount,
@@ -253,175 +417,25 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
             status: 'PROCESANDO' 
         });
 
-        console.log(`📩 [MESA DE CONTROL] Nueva solicitud de recarga PENDIENTE. Ref: ${ref} | Tel: ${phone}`);
-
-        return res.json({
-            success: true,
-            bypass: false,
-            message: "PAGO REGISTRADO EN REVISIÓN. TU SALDO SE ACTUALIZARÁ EN UNOS MINUTOS."
-        });
+        return res.json({ success: true, bypass: false, message: "PAGO REGISTRADO EN REVISIÓN." });
 
     } catch (error) {
-        console.error("❌ Falla crítica en pasarela manual:", error.message);
-        return res.status(500).json({ success: false, message: "ERROR EN RED INTERNA DE BILLETERA" });
-    }
-});
-
-// --- ENDPOINT: EL CEREBRO DE SOLICITUD DE VOZ (GROQ AGENT + AUDITORÍA MONGO) ---
-app.post('/api/command', async (req, res) => {
-    const { command, userCoords, tipoFlotaSeleccionada } = req.body;
-    
-    if (!command) {
-        return res.status(400).json({ reply: "Comando inválido o vacío." });
-    }
-
-    try {
-        const tasa = await obtenerTasaBCV();
-
-        const responseIA = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-                { 
-                    role: "system", 
-                    content: `Eres el núcleo de Inteligencia Artificial de Drivery OS. Tu labor es interpretar los deseos de movilidad del usuario. 
-                    - Si te pide ir a un lugar o cotizar, debes extraer los datos y estructurar los parámetros para la función 'crearViajeYummy'.
-                    - Si te pregunta si ya viene el conductor, pide el estatus o quiere saber los datos de la unidad, invoca 'consultarStatusYummy'.
-                    - Si es charla casual o dudas de navegación general, responde con texto fluido sin invocar funciones.` 
-                },
-                { role: "user", content: command }
-            ],
-            tools: yummyTools,
-            tool_choice: "auto"
-        });
-
-        const message = responseIA.choices[0].message;
-
-        if (message.tool_calls) {
-            const toolCall = message.tool_calls[0];
-            const functionName = toolCall.function.name;
-            const args = JSON.parse(toolCall.function.arguments);
-
-            console.log(`[GROQ AGENT EXECUTE] Ejecutando de manera autónoma: ${functionName}`);
-
-            if (functionName === "crearViajeYummy") {
-                const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(args.destinoNombre || command)}&key=${GOOGLE_MAPS_KEY}`);
-                
-                if (!geo.data.results || geo.data.results.length === 0) {
-                    return res.status(404).json({ reply: `No logré geolocalizar el destino sugerido.` });
-                }
-
-                const result = geo.data.results[0];
-                const destCoords = result.geometry.location;
-
-                // Lógica de tarifas dinámicas geográficas
-                let basePrice;
-                basePrice = Math.random() * (5.5 - 3.0) + 3.0; 
-
-                const fleetData = [
-                    { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
-                    { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" },
-                    { id: "premium", name: "Drivery Black", usd: (basePrice * 2.1).toFixed(2), bs: (basePrice * 2.1 * tasa).toFixed(2), eta: "8 min" }
-                ];
-
-                return res.json({ 
-                    destCoords, 
-                    reply: `Ruta procesada hacia ${args.destinoNombre || 'tu destino'}. Selecciona la flota en el panel táctico.`, 
-                    display: { fleet: fleetData } 
-                });
-            }
-        } else if(message.content) {
-            return res.json({ reply: message.content });
-        }
-    } catch(e) { 
-        console.error(e);
-        res.status(500).json({ reply: "Error interno procesando comando analítico." }); 
-    }
-});
-
-// --- ENDPOINT: SOLICITAR VIAJE DINÁMICO EN BASE DE DATOS REAL (EL TELÉFONO PIDE) ---
-app.post('/api/trip/request', async (req, res) => {
-    const { telefonoUsuario, destinoNombre, lat, lng, precioUsd, precioBs, tipoFlota } = req.body;
-
-    if (!telefonoUsuario || !destinoNombre || !lat || !lng) {
-        return res.status(400).json({ success: false, message: "Faltan parámetros de rastreo o de usuario." });
-    }
-
-    try {
-        const nuevoViaje = await Viaje.create({
-            telefonoUsuario: telefonoUsuario,
-            comandoOriginal: `Solicitud en vivo hacia ${destinoNombre}`,
-            status: "BUSCANDO",
-            destinoNombre: destinoNombre,
-            coordenadasDestino: { lat, lng },
-            coordenadasUsuario: { lat: 10.48, lng: -66.90 }, // Caracas base por defecto
-            tipoFlota: tipoFlota || "eco",
-            precioEstimadoUsd: precioUsd || 5.00,
-            precioEstimadoBs: precioBs || 225.00,
-            tasaBcvAplicada: bcvCache.valor,
-            yummyTripId: "DRV_" + Date.now().toString().slice(-6) // ID Único de rastreo para Polling
-        });
-
-        console.log(`🚀 [VIAJES] Nuevo viaje en la calle interactuando en DB. Tracking ID: ${nuevoViaje.yummyTripId}`);
-
-        res.json({ 
-            success: true, 
-            message: "BUSCANDO CONDUCTOR EN LA ZONA EN VIVO", 
-            yummyTripId: nuevoViaje.yummyTripId 
-        });
-
-    } catch (error) {
-        console.error("❌ Error al registrar viaje dinámico:", error.message);
-        res.status(500).json({ success: false, message: "Error en el clúster de asignación" });
-    }
-});
-
-// --- ENDPOINT: POLLING DINÁMICO DE ESTATUS (EL TELÉFONO INTERROGA A MONGO) ---
-app.get('/api/trip/status', async (req, res) => {
-    const { yummyTripId } = req.query;
-
-    if (!yummyTripId) {
-        return res.status(400).json({ error: "Se requiere el ID dinámico del viaje" });
-    }
-
-    try {
-        const viaje = await Viaje.findOne({ yummyTripId: yummyTripId });
-        
-        if (!viaje) {
-            return res.status(404).json({ error: "El viaje no existe o fue removido" });
-        }
-
-        return res.json({
-            status: viaje.status,
-            destino: viaje.destinoNombre,
-            yummyTripId: viaje.yummyTripId,
-            conductor: viaje.datosConductor // Retornará null si sigue BUSCANDO, o el objeto si ya fue ACEPTADO
-        });
-
-    } catch (error) {
-        res.status(500).json({ error: "Fallo de telemetría en base de datos" });
+        return res.status(500).json({ success: false, message: "ERROR EN BILLETERA" });
     }
 });
 
 // ==========================================================================
-// 5. ENDPOINTS DE ADMINISTRACIÓN (MESA DE CONTROL MANUAL INTERACTIVA)
+// 5. ENDPOINTS DE ADMINISTRACIÓN (MESA DE CONTROL MANUAL)
 // ==========================================================================
-
-// --- ADMIN CONTROL: APROBAR UN PAGO MÓVIL PENDIENTE Y SUMAR SALDO REAL ---
 app.post('/api/admin/approve-recharge', async (req, res) => {
     const { referencia, passwordAdmin } = req.body;
-
-    if (passwordAdmin !== "drivery_master_2026") {
-        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
-    }
+    if (passwordAdmin !== "drivery_master_2026") return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
 
     try {
         const transaccion = await Transaccion.findOne({ referencia: referencia, status: 'PROCESANDO' });
-        if (!transaccion) return res.status(404).json({ success: false, message: "Transacción pendiente no encontrada" });
+        if (!transaccion) return res.status(404).json({ success: false, message: "Transacción no encontrada" });
 
         const usuario = await Usuario.findOne({ telefono: transaccion.telefonoUsuario });
-        if (!usuario) return res.status(404).json({ success: false, message: "Usuario dueño no encontrado" });
-
-        // Acreditamos el dinero real recopilado de tu cuenta de banco
         usuario.balanceBs += transaccion.montoBs;
         usuario.balanceUsd += transaccion.montoUsd;
         await usuario.save();
@@ -429,23 +443,19 @@ app.post('/api/admin/approve-recharge', async (req, res) => {
         transaccion.status = 'APROBADO';
         await transaccion.save();
 
-        console.log(`✅ [MESA DE CONTROL] Saldo liberado manualmente para el usuario: ${usuario.telefono}`);
-        return res.json({ success: true, message: "SALDO ACREDITADO AL MONEDERO DEL USUARIO", nuevoSaldoUsd: usuario.balanceUsd });
-
+        return res.json({ success: true, nuevoSaldoUsd: usuario.balanceUsd });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
 });
 
-// --- ADMIN CONTROL: SIMULAR QUE UN CHOFER REAL TOMA LA CARRERA (DESBLOQUEO DE APP) ---
 app.post('/api/admin/accept-trip', async (req, res) => {
     const { yummyTripId, nombreChofer, vehiculo, placa, fotoUrl } = req.body;
 
     try {
         const viaje = await Viaje.findOne({ yummyTripId: yummyTripId, status: "BUSCANDO" });
-        if (!viaje) return res.status(404).json({ success: false, message: "Viaje ocupado, cancelado o inexistente" });
+        if (!viaje) return res.status(404).json({ success: false, message: "Viaje no disponible" });
 
-        // Inyección dinámica de metadatos del Conductor
         viaje.status = "ASIGNADO";
         viaje.datosConductor = {
             nombre: nombreChofer || "Juniel Querecuto",
@@ -455,10 +465,7 @@ app.post('/api/admin/accept-trip', async (req, res) => {
         };
 
         await viaje.save();
-        console.log(`🎯 [VIAJES] El conductor ${viaje.datosConductor.nombre} tomó dinámicamente el viaje ${yummyTripId}`);
-
-        return res.json({ success: true, message: "EL VIAJE CAMBIÓ A ESTADO ASIGNADO CORRECTAMENTE" });
-
+        return res.json({ success: true, message: "VIAJE ASIGNADO CORRECTAMENTE CORRIENDO EN BETA" });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
