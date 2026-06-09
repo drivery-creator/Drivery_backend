@@ -69,7 +69,7 @@ const ViajeSchema = new mongoose.Schema({
     status: { type: String, enum: ['BUSCANDO', 'ASIGNADO', 'FINALIZADO', 'CANCELADO'], default: 'BUSCANDO' },
     destinoNombre: String,
     coordenadasDestino: { lat: Number, lng: Number },
-    coordinatesUsuario: { lat: Number, lng: Number },
+    coordenadasUsuario: { lat: Number, lng: Number },
     tipoFlota: String,
     precioEstimadoUsd: Number,
     precioEstimadoBs: Number,
@@ -139,20 +139,27 @@ app.get('/', (req, res) => {
 // 6. ENDPOINTS DE LA API REST
 // ==========================================================================
 
-// --- ENDPOINT EXTERNO PROXY: AUTENTICACIÓN ESPEJO ---
+// --- ENDPOINT EXTERNO PROXY: AUTENTICACIÓN ESPEJO (OPTIMIZADO) ---
 app.post('/api/auth/external', async (req, res) => {
-    const { phone, password } = req.body;
+    // Toleramos ambos formatos de entrada (camelCase y snake_case) para blindar el Frontend
+    const phone = req.body.phone || req.body.phone_number;
+    const password = req.body.password || req.body.pin;
 
     if (!phone || !password) {
-        return res.status(400).json({ success: false, message: "CAMPOS INCOMPLETOS" });
+        console.warn(`⚠️ [PROXY GATEWAY] Intento de vinculación rechazado: Campos incompletos.`);
+        return res.status(400).json({ success: false, message: "CAMPOS INCOMPLETOS: Se requiere teléfono y credencial." });
     }
 
     try {
-        console.log(`📡 [PROXY GATEWAY] Handshake externo para terminal: ${phone}`);
+        console.log(`📡 [PROXY GATEWAY] Iniciando handshake de espejo para el terminal: ${phone}`);
+
+        // Aseguramos la limpieza estructural de los strings de entrada
+        const formattedPhone = phone.toString().trim();
+        const formattedPin = password.toString().trim();
 
         const respuestaExterna = await axios.post(`${YUMMY_API_BASE}/auth/login`, {
-            phone_number: phone,
-            pin: password,
+            phone_number: formattedPhone,
+            pin: formattedPin,
             device_type: "android"
         }, {
             headers: {
@@ -161,35 +168,52 @@ app.post('/api/auth/external', async (req, res) => {
                 "X-Device-Id": "android_drivery_os_core",
                 "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
             },
-            timeout: 7000
+            timeout: 9000 // Aumento estratégico del margen de espera de red celular
         });
 
-        const tokenReal = respuestaExterna.data.token || respuestaExterna.data.accessToken;
+        // Mapeo dinámico y profundo del token remoto devuelto
+        const tokenReal = respuestaExterna.data.token || respuestaExterna.data.accessToken || (respuestaExterna.data.data ? respuestaExterna.data.data.token : null);
 
-        let usuario = await Usuario.findOne({ telefono: phone });
+        if (!tokenReal) {
+            console.error('❌ [Proxy Auth Error] Estructura remota inconsistente: Autenticado sin token legible.');
+            return res.status(401).json({ success: false, message: "RESPUESTA COMPROMETIDA DEL NÚCLEO EXTERNO" });
+        }
+
+        // Escritura atómica en MongoDB Atlas para asentar al operador de la flota
+        let usuario = await Usuario.findOne({ telefono: formattedPhone });
         if (usuario) {
-            usuario.pinCifrado = password;
+            usuario.pinCifrado = formattedPin;
+            usuario.statusEnlace = 'VINCULADO';
             usuario.ultimaConexion = Date.now();
             await usuario.save();
         } else {
             usuario = await Usuario.create({
-                telefono: phone,
-                pinCifrado: password,
+                telefono: formattedPhone,
+                pinCifrado: formattedPin,
+                statusEnlace: 'VINCULADO',
                 balanceUsd: 0.00,
                 balanceBs: 0.00
             });
         }
 
+        console.log(`🏁 [PROXY GATEWAY] Canal de sincronización establecido con éxito para ${formattedPhone}`);
+
         return res.json({ 
             success: true, 
             tokenExterno: tokenReal,
             message: "SESIÓN ESPEJADA CON ÉXITO",
-            user: { telefono: usuario.telefono, balanceUsd: usuario.balanceUsd }
+            user: { telefono: usuario.telefono, balanceUsd: usuario.balanceUsd, statusEnlace: usuario.statusEnlace }
         });
 
     } catch (error) {
-        console.error('❌ [Proxy Auth Error] Fallo al espejar sesión remota:', error.message);
-        return res.status(401).json({ success: false, message: "FALLA DE AUTENTICACIÓN EN LA CUENTA EXTERNA" });
+        console.error('❌ [Proxy Auth Error] Fallo al espejar sesión remota:', error.response ? error.response.data : error.message);
+        
+        const statusError = error.response ? error.response.status : 401;
+        const msgError = error.response && error.response.data && error.response.data.message 
+            ? error.response.data.message 
+            : "FALLA DE AUTENTICACIÓN EN LA CUENTA EXTERNA";
+
+        return res.status(statusError).json({ success: false, message: msgError });
     }
 });
 
