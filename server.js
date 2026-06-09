@@ -18,11 +18,19 @@ if (!MONGO_URI) {
     process.exit(1);
 }
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('🏁 [Drivery OS DB] Conexión de alta disponibilidad establecida con éxito.'))
-    .catch(err => console.error('❌ [Drivery OS DB] Fallo en la conexión inicial:', err.message));
+const connectDB = () => {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log('🏁 [Drivery OS DB] Conexión de alta disponibilidad establecida con éxito.'))
+        .catch(err => {
+            console.error('❌ [Drivery OS DB] Fallo en la conexión inicial:', err.message);
+            setTimeout(connectDB, 5000); // Reintento estratégico
+        });
+};
+connectDB();
 
-mongoose.connection.on('disconnected', () => console.warn('⚠️ Alerta: Conexión con MongoDB perdida. Reintentando...'));
+mongoose.connection.on('disconnected', () => {
+    console.warn('⚠️ Alerta: Conexión con MongoDB perdida. Intentando reconectar...');
+});
 
 // ==========================================================================
 // 2. MODELOS Y ESQUEMAS DE DATOS (PERSISTENCIA EN LA NUBE)
@@ -69,9 +77,8 @@ const Viaje = mongoose.model('Viaje', ViajeSchema);
 // 3. CONFIGURACIÓN DE APIS EXTERNAS Y VARIABLES GLOBALES
 // ==========================================================================
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
-
-const YUMMY_API_BASE = "https://api.yummy.rides/v1"; 
+const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY; // Protegido en variables de entorno
+const YUMMY_API_BASE = process.env.YUMMY_API_BASE || "https://api.yummy.rides/v1"; 
 
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
@@ -79,14 +86,18 @@ async function obtenerTasaBCV() {
     const ahora = Date.now();
     if (ahora - bcvCache.ultimaVez < 1800000) return bcvCache.valor; 
     try {
-        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial');
-        bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
-        console.log(`💱 [BCV API] Tasa oficial actualizada en vivo: ${bcvCache.valor} Bs/USD`);
+        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', { timeout: 4000 });
+        if (res.data && res.data.promedio) {
+            bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
+            console.log(`💱 [BCV API] Tasa oficial actualizada en vivo: ${bcvCache.valor} Bs/USD`);
+        }
         return bcvCache.valor;
-    } catch (e) { return bcvCache.valor; }
+    } catch (e) { 
+        console.warn('⚠️ Fallo al consultar DolarAPI, usando caché de respaldo:', bcvCache.valor);
+        return bcvCache.valor; 
+    }
 }
 
-// System Prompt blindado para restringir la inteligencia artificial única y exclusivamente a Venezuela
 const SYSTEM_PROMPT_DRIVERY = `Eres el núcleo de Inteligencia Artificial de Drivery OS, un orquestador táctico de movilidad premium para Venezuela. Tu única función es procesar comandos de voz de usuarios que desean transportarse y extraer coordenadas geográficas precisas.
 
 RESTRICCIONES GEOGRÁFICAS STRICTAS (POLÍTICA SIN MARGEN DE ERROR):
@@ -124,7 +135,6 @@ app.post('/api/auth/external', async (req, res) => {
     try {
         console.log(`📡 [PROXY GATEWAY] Handshake externo para terminal: ${phone}`);
 
-        // Autenticación por raspado contra el endpoint real de la plataforma externa
         const respuestaExterna = await axios.post(`${YUMMY_API_BASE}/auth/login`, {
             phone_number: phone,
             pin: password,
@@ -135,12 +145,12 @@ app.post('/api/auth/external', async (req, res) => {
                 "X-App-Version": "4.12.0",
                 "X-Device-Id": "android_drivery_os_core",
                 "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) DriveryOrchestrator/2.0"
-            }
+            },
+            timeout: 7000
         });
 
         const tokenReal = respuestaExterna.data.token || respuestaExterna.data.accessToken;
 
-        // Persistimos o actualizamos localmente la cuenta en el clúster MongoDB
         let usuario = await Usuario.findOne({ telefono: phone });
         if (usuario) {
             usuario.pinCifrado = password;
@@ -168,7 +178,7 @@ app.post('/api/auth/external', async (req, res) => {
     }
 });
 
-// --- ENDPOINT: EL CEREBRO DE VOZ (VENEZOLANIZADO + CÁLCULO DE DISTANCIA REAL) ---
+// --- ENDPOINT: EL CEREBRO DE VOZ ---
 app.post('/api/command', async (req, res) => {
     const { command, userCoords } = req.body;
     
@@ -176,13 +186,11 @@ app.post('/api/command', async (req, res) => {
         return res.status(400).json({ reply: "Comando inválido o vacío." });
     }
 
-    // Ubicación de anclaje base si el dispositivo no transmite telemetría (CCCT, Caracas)
     const baseCoords = userCoords && userCoords.lat ? userCoords : { lat: 10.4806, lng: -66.9036 };
 
     try {
         const tasa = await obtenerTasaBCV();
 
-        // Llamada limpia a Groq estructurando la restricción venezolana
         const responseIA = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             messages: [
@@ -192,14 +200,18 @@ app.post('/api/command', async (req, res) => {
             response_format: { type: "json_object" }
         });
 
-        const aiResult = JSON.parse(responseIA.choices[0].message.content);
+        let aiResult;
+        try {
+            aiResult = JSON.parse(responseIA.choices[0].message.content);
+        } catch (parseErr) {
+            console.error("❌ Error parseando respuesta de IA, usando contingencia:", parseErr);
+            return res.json({ reply: "No se pudo procesar el comando de voz correctamente. Intente de nuevo.", destCoords: null });
+        }
 
-        // Si la IA determinó que el destino está fuera de cobertura geográfica nacional
         if (!aiResult.success || !aiResult.destinoProcesado) {
             return res.json({ reply: aiResult.reply, destCoords: null });
         }
 
-        // Ejecutamos la geolocalización forzando los términos hacia el mapa de Venezuela
         const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(aiResult.destinoProcesado)}&key=${GOOGLE_MAPS_KEY}`;
         const geo = await axios.get(geoUrl);
         
@@ -210,9 +222,7 @@ app.post('/api/command', async (req, res) => {
         const result = geo.data.results[0];
         const destCoords = result.geometry.location;
 
-        // --- CÁLCULO MATEO-MÉTRICO DE DISTANCIA REAL (Evita el Math.random de tarifas) ---
-        // Usamos la API de Distance Matrix para saber los kilómetros reales en la vía de Caracas
-        let distanciaKm = 5.0; // Respaldo base de 5 Km si la sub-api falla
+        let distanciaKm = 5.0; 
         try {
             const distanceUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${baseCoords.lat},${baseCoords.lng}&destinations=${destCoords.lat},${destCoords.lng}&key=${GOOGLE_MAPS_KEY}`;
             const distRes = await axios.get(distanceUrl);
@@ -223,9 +233,8 @@ app.post('/api/command', async (req, res) => {
             console.warn("Alerta: Usando telemetría analítica de distancia lineal.");
         }
 
-        // Algoritmo de precios ajustado al mercado real caraqueño ($2.00 fijos de arranque + $0.75 por Km)
         let precioBaseUsd = 2.00 + (distanciaKm * 0.75);
-        if (precioBaseUsd < 3.00) precioBaseUsd = 3.00; // Tarifa mínima del mercado
+        if (precioBaseUsd < 3.00) precioBaseUsd = 3.00; 
 
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: precioBaseUsd.toFixed(2), bs: (precioBaseUsd * tasa).toFixed(2), eta: "3 min" },
@@ -246,7 +255,7 @@ app.post('/api/command', async (req, res) => {
     }
 });
 
-// --- ENDPOINT PROXY: EXTRACTOR Y ESPEJO DE TARIFAS REALES DESDE EL BACKEND ---
+// --- ENDPOINT PROXY: EXTRACTOR DE TARIFAS REALES ---
 app.post('/api/trip/quote-real', async (req, res) => {
     const { token, origin, dest } = req.body;
 
@@ -257,7 +266,6 @@ app.post('/api/trip/quote-real', async (req, res) => {
     try {
         const tasa = await obtenerTasaBCV();
 
-        // Petición por Proxy usando el token activo del usuario hacia las rutas externas
         const respuestaCotizacion = await axios.post(`${YUMMY_API_BASE}/trips/quote`, {
             pickup_lat: origin.lat,
             pickup_lng: origin.lng,
@@ -267,12 +275,12 @@ app.post('/api/trip/quote-real', async (req, res) => {
             headers: { 
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json"
-            }
+            },
+            timeout: 6000
         });
 
         const serviciosExternos = respuestaCotizacion.data.services || [];
         
-        // Sincronizamos las tarjetas de la Flota Web mapeando los precios reales recopilados
         const fleetMapped = serviciosExternos.map(serv => {
             const precioUsd = parseFloat(serv.price_usd || serv.price || 0);
             return {
@@ -284,7 +292,7 @@ app.post('/api/trip/quote-real', async (req, res) => {
             };
         });
 
-        if (fleetMapped.length === 0) throw new Error("Estructura externa modificada.");
+        if (fleetMapped.length === 0) throw new Error("Estructura externa modificada o vacía.");
 
         return res.json({ success: true, fleet: fleetMapped });
 
@@ -294,7 +302,7 @@ app.post('/api/trip/quote-real', async (req, res) => {
     }
 });
 
-// --- ENDPOINT: SOLICITAR VIAJE EN LA BBDD LOCAL ---
+// --- ENDPOINT: SOLICITAR VIAJE ---
 app.post('/api/trip/request', async (req, res) => {
     const { telefonoUsuario, destinoNombre, lat, lng, precioUsd, precioBs, tipoFlota } = req.body;
 
@@ -324,6 +332,7 @@ app.post('/api/trip/request', async (req, res) => {
         });
 
     } catch (error) {
+        console.error("Error guardando viaje en MongoDB:", error.message);
         res.status(500).json({ success: false, message: "Error en el clúster de asignación" });
     }
 });
@@ -429,7 +438,9 @@ app.post('/api/wallet/verify-recharge', async (req, res) => {
 // ==========================================================================
 app.post('/api/admin/approve-recharge', async (req, res) => {
     const { referencia, passwordAdmin } = req.body;
-    if (passwordAdmin !== "drivery_master_2026") return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
+    if (passwordAdmin !== process.env.ADMIN_PASSWORD) {
+        return res.status(401).json({ success: false, message: "ACCESO DENEGADO" });
+    }
 
     try {
         const transaccion = await Transaccion.findOne({ referencia: referencia, status: 'PROCESANDO' });
