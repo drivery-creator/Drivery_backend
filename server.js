@@ -14,13 +14,13 @@ app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// SECTOR DE SEGURIDAD: Prioriza variables de entorno para evitar filtrado de credenciales
+// ==========================================
+// SECTOR DE CONFIGURACIÓN Y SEGURIDAD
+// ==========================================
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
 const MONGO_URI = process.env.MONGO_URI || "TU_CADENA_DE_CONEXION_DE_ATLAS_AQUI";
 
-// ==========================================
-// CONEXIÓN ESTRUCTURADA A MONGODB
-// ==========================================
+// Conexión Estructurada a MongoDB Atlas
 mongoose.connect(MONGO_URI)
     .then(() => console.log('► CONEXIÓN EXITOSA A MONGODB ATLAS ◄'))
     .catch(err => console.error('❌ ERROR AL CONECTAR MONGODB:', err));
@@ -36,7 +36,7 @@ const ConductorSchema = new mongoose.Schema({
 const Conductor = mongoose.model('Conductor', ConductorSchema);
 
 // ==========================================
-// CONFIGURACIÓN DE MULTER
+// CONFIGURACIÓN DE ALMACENAMIENTO (MULTER)
 // ==========================================
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -54,20 +54,24 @@ if (!fs.existsSync('uploads')) {
 }
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Cache para la tasa del BCV
 let bcvCache = { valor: 45.10, ultimaVez: 0 };
 
 async function obtenerTasaBCV() {
     const ahora = Date.now();
     if (ahora - bcvCache.ultimaVez < 1800000) return bcvCache.valor; 
     try {
-        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial');
+        const res = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', { timeout: 3000 });
         bcvCache = { valor: parseFloat(res.data.promedio), ultimaVez: ahora };
         return bcvCache.valor;
-    } catch (e) { return bcvCache.valor; }
+    } catch (e) { 
+        console.warn("[WARN] No se pudo consultar DolarAPI, usando tasa en cache:", bcvCache.valor);
+        return bcvCache.valor; 
+    }
 }
 
 // ==========================================
-// ENDPOINT DE REGISTRO GUARDANDO EN MONGO
+// ENDPOINT: REGISTRO DE CONDUCTORES (MONGO)
 // ==========================================
 app.post('/api/register', upload.single('profilePic'), async (req, res) => {
     try {
@@ -77,12 +81,10 @@ app.post('/api/register', upload.single('profilePic'), async (req, res) => {
             return res.status(400).json({ success: false, response: "El ID y el Token de acceso son obligatorios." });
         }
 
-        // Generamos la URL local/pública de la foto
         const fileUrl = req.file 
             ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
             : null;
 
-        // GUARDADO REAL EN MONGO: Si ya existe lo actualiza, si no, lo crea (Upsert)
         const conductorGuardado = await Conductor.findOneAndUpdate(
             { conductorId: conductorId },
             { 
@@ -92,7 +94,7 @@ app.post('/api/register', upload.single('profilePic'), async (req, res) => {
             { new: true, upsert: true }
         );
 
-        console.log(`[DATABASE] Registro salvado en la nube de Mongo para ID: ${conductorGuardado.conductorId}`);
+        console.log(`[DATABASE] Registro persistido para ID: ${conductorGuardado.conductorId}`);
 
         res.json({
             success: true,
@@ -109,51 +111,73 @@ app.post('/api/register', upload.single('profilePic'), async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT 1: PROCESAMIENTO INICIAL DE VOZ
+// ENDPOINT 1: PROCESAMIENTO INICIAL DE VOZ (BLINDADO)
 // ==========================================
 app.post('/api/command', async (req, res) => {
     const textInput = req.body.query || req.body.command;
+    console.log(`\n[COMMAND] Nueva instrucción de voz recibida: "${textInput}"`);
+
     if (!textInput) {
-        return res.status(400).json({ response: "No se recibió ninguna instrucción de voz válida." });
+        return res.status(400).json({ success: false, response: "No se recibió ninguna instrucción de voz válida." });
     }
 
+    let tasa = 45.10;
+    let destinoNombre = null;
+
     try {
-        const [tasa, completion] = await Promise.all([
-            obtenerTasaBCV(),
-            groq.chat.completions.create({
-                messages: [
-                    { role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Ciudad\"}. No prose. If user specifies a well-known place in Caracas (like Sambil, Quinta Crespo, La Candelaria, Colonia Tovar), append ', Caracas, Venezuela' to the destination field." }, 
-                    { role: "user", content: textInput }
-                ],
-                model: "llama-3.3-70b-versatile",
-                response_format: { type: "json_object" }
-            })
-        ]);
+        // 1. Obtención de tasa cambiaria
+        tasa = await obtenerTasaBCV();
 
-        // Validación defensiva del parseo de la respuesta de la IA
+        // 2. Extracción de destino con Groq (Llama 3.3)
+        console.log("[GROQ] Solicitando extracción de estructura limpia a la IA...");
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "Extract destination JSON: {\"destino\": \"Lugar, Ciudad\"}. No prose. If user specifies a well-known place in Caracas (like Sambil, Quinta Crespo, La Candelaria, Colonia Tovar), append ', Caracas, Venezuela' to the destination field." }, 
+                { role: "user", content: textInput }
+            ],
+            model: "llama-3.3-70b-versatile",
+            response_format: { type: "json_object" }
+        });
+
         const contentRaw = completion.choices[0].message.content;
+        console.log(`[GROQ] Respuesta JSON cruda: ${contentRaw}`);
+        
         const parsedJson = JSON.parse(contentRaw);
-        const destinoNombre = parsedJson.destino;
+        destinoNombre = parsedJson.destino;
 
-        if (!destinoNombre) {
-            return res.status(422).json({ response: "La IA no logró extraer un destino estructurado de la instrucción de voz." });
+        if (!destinoNombre || destinoNombre.trim() === "") {
+            console.error("[GROQ ERROR] El JSON devuelto no contiene la propiedad 'destino' o está vacía.");
+            return res.status(422).json({ success: false, response: "No logré extraer una dirección clara de tu comando de voz." });
         }
 
-        const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
-        
-        if (!geo.data.results || geo.data.results.length === 0) {
-            return res.status(404).json({ response: `No logré ubicar el destino: ${destinoNombre}.` });
+        // 3. Geolocalización mediante API de Google Maps
+        console.log(`[MAPS] Consultando coordenadas en Google Cloud para: "${destinoNombre}"`);
+        let geo;
+        try {
+            geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`, { timeout: 6000 });
+        } catch (errorGeo) {
+            console.error("[❌ MAPS API ERROR]:", errorGeo.message);
+            return res.status(502).json({ success: false, response: "Error de comunicación con el servidor de mapas de Google." });
+        }
+
+        if (!geo.data.results || geo.data.results.length === 0 || geo.data.status !== "OK") {
+            console.error(`[MAPS ERROR] No se hallaron resultados para la dirección. Status Google: ${geo.data.status}`);
+            return res.status(404).json({ success: false, response: `No logré ubicar geográficamente el destino: ${destinoNombre}.` });
         }
 
         const destCoords = geo.data.results[0].geometry.location;
+        console.log(`[MAPS SUCCESS] Coordenadas fijadas -> Lat: ${destCoords.lat}, Lng: ${destCoords.lng}`);
 
+        // 4. Construcción de estimaciones de tarifas tarifarias
         const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
             { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" }
         ];
 
-        res.json({ 
+        // Respuesta final exitosa
+        console.log("[SUCCESS] Enviando paquete de datos estructurados al APK cliente.");
+        return res.json({ 
             success: true,
             destCoords: { lat: destCoords.lat, lng: destCoords.lng }, 
             destinoPurificado: destinoNombre,
@@ -162,8 +186,8 @@ app.post('/api/command', async (req, res) => {
         });
 
     } catch (e) { 
-        console.error("Error en Endpoint Command:", e.message);
-        res.status(500).json({ response: "Error en el procesamiento interno de la ruta." }); 
+        console.error("[CRITICAL ERROR] Quiebre total en el endpoint /api/command:", e);
+        return res.status(500).json({ success: false, response: "El núcleo de la IA experimentó un error interno al procesar la ruta." }); 
     }
 });
 
