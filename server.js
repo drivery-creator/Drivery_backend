@@ -5,7 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
-const mongoose = require('mongoose'); // ◄ NUEVO: Mongoose para MongoDB
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
@@ -13,13 +13,14 @@ app.use(cors());
 app.use(express.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const GOOGLE_MAPS_KEY = "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
+
+// SECTOR DE SEGURIDAD: Prioriza variables de entorno para evitar filtrado de credenciales
+const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "AIzaSyAFwND09Y6rrNzVrhOdu5wGptY063y-fME";
+const MONGO_URI = process.env.MONGO_URI || "TU_CADENA_DE_CONEXION_DE_ATLAS_AQUI";
 
 // ==========================================
 // CONEXIÓN ESTRUCTURADA A MONGODB
 // ==========================================
-const MONGO_URI = process.env.MONGO_URI || "TU_CADENA_DE_CONEXION_DE_ATLAS_AQUI";
-
 mongoose.connect(MONGO_URI)
     .then(() => console.log('► CONEXIÓN EXITOSA A MONGODB ATLAS ◄'))
     .catch(err => console.error('❌ ERROR AL CONECTAR MONGODB:', err));
@@ -129,7 +130,15 @@ app.post('/api/command', async (req, res) => {
             })
         ]);
 
-        const destinoNombre = JSON.parse(completion.choices[0].message.content).destino;
+        // Validación defensiva del parseo de la respuesta de la IA
+        const contentRaw = completion.choices[0].message.content;
+        const parsedJson = JSON.parse(contentRaw);
+        const destinoNombre = parsedJson.destino;
+
+        if (!destinoNombre) {
+            return res.status(422).json({ response: "La IA no logró extraer un destino estructurado de la instrucción de voz." });
+        }
+
         const geo = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destinoNombre)}&key=${GOOGLE_MAPS_KEY}`);
         
         if (!geo.data.results || geo.data.results.length === 0) {
@@ -153,7 +162,7 @@ app.post('/api/command', async (req, res) => {
         });
 
     } catch (e) { 
-        console.error("Error:", e.message);
+        console.error("Error en Endpoint Command:", e.message);
         res.status(500).json({ response: "Error en el procesamiento interno de la ruta." }); 
     }
 });
@@ -204,4 +213,4 @@ app.post('/api/agent/action', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE`));
+app.listen(PORT, '0.0.0.0', () => console.log(`DRIVERY CORE ONLINE IN PORT ${PORT}`));
