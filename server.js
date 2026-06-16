@@ -25,15 +25,15 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('► CONEXIÓN EXITOSA A MONGODB ATLAS ◄'))
     .catch(err => console.error('❌ ERROR AL CONECTAR MONGODB:', err));
 
-// Esquema de datos para el Conductor de Drivery OS
-const ConductorSchema = new mongoose.Schema({
-    conductorId: { type: String, required: true, unique: true },
-    tokenAcceso: { type: String, required: true },
+// Esquema de datos purificado para el Pasajero de Drivery OS
+const PasajeroSchema = new mongoose.Schema({
+    pasajeroId: { type: String, required: true, unique: true },
+    clavePasajero: { type: String, required: true },
     profilePicUrl: { type: String, default: null },
     createdAt: { type: Date, default: Date.now }
 });
 
-const Conductor = mongoose.model('Conductor', ConductorSchema);
+const Pasajero = mongoose.model('Pasajero', PasajeroSchema);
 
 // ==========================================
 // CONFIGURACIÓN DE ALMACENAMIENTO (MULTER)
@@ -43,8 +43,9 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: function (req, file, cb) {
-        const conductorId = req.body.conductorId || 'anonimo';
-        cb(null, `${conductorId}_${Date.now()}${path.extname(file.originalname)}`);
+        // Adaptado para identificar la captura por el ID del pasajero
+        const pasajeroId = req.body.pasajeroId || 'anonimo';
+        cb(null, `${pasajeroId}_${Date.now()}${path.extname(file.originalname)}`);
     }
 });
 const upload = multer({ storage: storage });
@@ -71,42 +72,44 @@ async function obtenerTasaBCV() {
 }
 
 // ==========================================
-// ENDPOINT: REGISTRO DE CONDUCTORES (MONGO)
+// ENDPOINT: REGISTRO DE PASAJEROS (MONGO)
 // ==========================================
 app.post('/api/register', upload.single('profilePic'), async (req, res) => {
     try {
-        const { conductorId, tokenAcceso } = req.body;
+        // Extracción de las credenciales purificadas desde Flutter
+        const { pasajeroId, clavePasajero } = req.body;
         
-        if (!conductorId || !tokenAcceso) {
-            return res.status(400).json({ success: false, response: "El ID y el Token de acceso son obligatorios." });
+        if (!pasajeroId || !clavePasajero) {
+            return res.status(400).json({ success: false, response: "El ID del Pasajero y la Clave son obligatorios." });
         }
 
         const fileUrl = req.file 
             ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
             : null;
 
-        const conductorGuardado = await Conductor.findOneAndUpdate(
-            { conductorId: conductorId },
+        // Persistencia directa sobre la colección de Pasajeros
+        const pasajeroGuardado = await Pasajero.findOneAndUpdate(
+            { pasajeroId: pasajeroId },
             { 
-                tokenAcceso: tokenAcceso,
+                clavePasajero: clavePasajero,
                 profilePicUrl: fileUrl 
             },
             { new: true, upsert: true }
         );
 
-        console.log(`[DATABASE] Registro persistido para ID: ${conductorGuardado.conductorId}`);
+        console.log(`[DATABASE] Registro persistido para Pasajero ID: ${pasajeroGuardado.pasajeroId}`);
 
         res.json({
             success: true,
             response: "Sistema de Drivery OS conectado y persistido con éxito.",
-            conductor: {
-                id: conductorGuardado.conductorId,
-                profilePicUrl: conductorGuardado.profilePicUrl
+            pasajero: {
+                id: pasajeroGuardado.pasajeroId,
+                profilePicUrl: pasajeroGuardado.profilePicUrl
             }
         });
     } catch (e) {
         console.error("Error en Registro Base Datos:", e.message);
-        res.status(500).json({ success: false, response: "Error interno salvando credenciales." });
+        res.status(500).json({ success: false, response: "Error interno salvando credenciales del pasajero." });
     }
 });
 
@@ -168,7 +171,7 @@ app.post('/api/command', async (req, res) => {
         const destCoords = geo.data.results[0].geometry.location;
         console.log(`[MAPS SUCCESS] Coordenadas fijadas -> Lat: ${destCoords.lat}, Lng: ${destCoords.lng}`);
 
-        // 4. Construcción de estimaciones de tarifas tarifarias
+        // 4. Construcción de estimaciones de tarifas
         const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
