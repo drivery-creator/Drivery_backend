@@ -163,9 +163,10 @@ app.post('/api/command', async (req, res) => {
             return res.status(502).json({ success: false, response: "Error de comunicación con el servidor de mapas de Google." });
         }
 
+        // CORRECCIÓN: Modificado de 404 a 422 para que Flutter identifique un fallo geográfico controlado y no un error de ruta del servidor.
         if (!geo.data.results || geo.data.results.length === 0 || geo.data.status !== "OK") {
             console.error(`[MAPS ERROR] No se hallaron resultados para la dirección. Status Google: ${geo.data.status}`);
-            return res.status(404).json({ success: false, response: `No logré ubicar geográficamente el destino: ${destinoNombre}.` });
+            return res.status(422).json({ success: false, response: `No logré ubicar geográficamente el destino: ${destinoNombre}. Verifica la dirección.` });
         }
 
         const destCoords = geo.data.results[0].geometry.location;
