@@ -12,6 +12,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ==========================================
+// MONITOR DE TRÁFICO GLOBAL EN TIEMPO REAL
+// ==========================================
+app.use((req, res, next) => {
+    console.log(`[NET-TRAFFIC] ${new Date().toISOString()} -> IP: ${req.ip} | MÉTODO: ${req.method} | RUTA SOLICITADA: ${req.originalUrl}`);
+    next();
+});
+
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ==========================================
@@ -43,7 +51,6 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: function (req, file, cb) {
-        // Adaptado para identificar la captura por el ID del pasajero
         const pasajeroId = req.body.pasajeroId || 'anonimo';
         cb(null, `${pasajeroId}_${Date.now()}${path.extname(file.originalname)}`);
     }
@@ -76,7 +83,6 @@ async function obtenerTasaBCV() {
 // ==========================================
 app.post('/api/register', upload.single('profilePic'), async (req, res) => {
     try {
-        // Extracción de las credenciales purificadas desde Flutter
         const { pasajeroId, clavePasajero } = req.body;
         
         if (!pasajeroId || !clavePasajero) {
@@ -87,7 +93,6 @@ app.post('/api/register', upload.single('profilePic'), async (req, res) => {
             ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
             : null;
 
-        // Persistencia directa sobre la colección de Pasajeros
         const pasajeroGuardado = await Pasajero.findOneAndUpdate(
             { pasajeroId: pasajeroId },
             { 
@@ -128,10 +133,8 @@ app.post('/api/command', async (req, res) => {
     let destinoNombre = null;
 
     try {
-        // 1. Obtención de tasa cambiaria
         tasa = await obtenerTasaBCV();
 
-        // 2. Extracción de destino con Groq (Llama 3.3)
         console.log("[GROQ] Solicitando extracción de estructura limpia a la IA...");
         const completion = await groq.chat.completions.create({
             messages: [
@@ -153,7 +156,6 @@ app.post('/api/command', async (req, res) => {
             return res.status(422).json({ success: false, response: "No logré extraer una dirección clara de tu comando de voz." });
         }
 
-        // 3. Geolocalización mediante API de Google Maps
         console.log(`[MAPS] Consultando coordenadas en Google Cloud para: "${destinoNombre}"`);
         let geo;
         try {
@@ -163,7 +165,6 @@ app.post('/api/command', async (req, res) => {
             return res.status(502).json({ success: false, response: "Error de comunicación con el servidor de mapas de Google." });
         }
 
-        // CORRECCIÓN: Modificado de 404 a 422 para que Flutter identifique un fallo geográfico controlado y no un error de ruta del servidor.
         if (!geo.data.results || geo.data.results.length === 0 || geo.data.status !== "OK") {
             console.error(`[MAPS ERROR] No se hallaron resultados para la dirección. Status Google: ${geo.data.status}`);
             return res.status(422).json({ success: false, response: `No logré ubicar geográficamente el destino: ${destinoNombre}. Verifica la dirección.` });
@@ -172,15 +173,13 @@ app.post('/api/command', async (req, res) => {
         const destCoords = geo.data.results[0].geometry.location;
         console.log(`[MAPS SUCCESS] Coordenadas fijadas -> Lat: ${destCoords.lat}, Lng: ${destCoords.lng}`);
 
-        // 4. Construcción de estimaciones de tarifas
         const basePrice = Math.random() * (5.5 - 3.0) + 3.0;
         const fleetData = [
             { id: "eco", name: "Drivery Eco", usd: basePrice.toFixed(2), bs: (basePrice * tasa).toFixed(2), eta: "3 min" },
             { id: "confort", name: "Drivery Confort", usd: (basePrice * 1.35).toFixed(2), bs: (basePrice * 1.35 * tasa).toFixed(2), eta: "5 min" }
         ];
 
-        // Respuesta final exitosa
-        console.log("[SUCCESS] Enviando paquete de datos estructurados al APK cliente.");
+        console.log("[SUCCESS] Enviando paquete de datos estruturados al APK cliente.");
         return res.json({ 
             success: true,
             destCoords: { lat: destCoords.lat, lng: destCoords.lng }, 
@@ -238,6 +237,17 @@ app.post('/api/agent/action', async (req, res) => {
         console.error("Error en Agente Autónomo:", e.message);
         res.status(500).json({ action: "NONE", reason: "Error procesando los nodos de la interfaz." });
     }
+});
+
+// ==========================================
+// CAPTURADOR EXPLICÍTÓ DE ERRORES 404
+// ==========================================
+app.use((req, res, next) => {
+    console.error(`[🚨 RUTA DESCONOCIDA - 404] Interceptado tráfico a ruta inválida: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({
+        success: false,
+        response: `La ruta '${req.originalUrl}' no existe en la infraestructura de este core.`
+    });
 });
 
 const PORT = process.env.PORT || 10000;
