@@ -190,7 +190,13 @@ app.post('/api/command', async (req, res) => {
 
     } catch (e) { 
         console.error("[CRITICAL ERROR] Quiebre total en el endpoint /api/command:", e);
-        return res.status(500).json({ success: false, response: "El núcleo de la IA experimentó un error interno al procesar la ruta." }); 
+        
+        // Extrae el mensaje de error real del sistema y se lo inyecta a la respuesta de voz
+        const errorLimpio = e.message || "Error desconocido en el hilo principal.";
+        return res.status(500).json({ 
+            success: false, 
+            response: `Atención: Fallo en el núcleo de la IA. Motivo técnico: ${errorLimpio}` 
+        }); 
     }
 });
 
@@ -219,7 +225,7 @@ app.post('/api/agent/action', async (req, res) => {
         1. Si ves un campo de entrada de texto para buscar direcciones (ej: "¿A dónde vamos?", "Introduce destino", "search", "destination"), tu acción es "WRITE", pones su ID en "target_id" y colocas el valor de "${destino}" en "text_to_write".
         2. Si el usuario ya escribió pero hay que confirmar la dirección tocando el primer resultado de la lista de sugerencias o un botón de 'Confirmar', tu acción es "CLICK".
         3. Si la app ya está en la pantalla de selección de vehículos y muestra los precios en pantalla (tarifas con $, Bs, Eco, Moto, etc), tu acción es "EXTRACT_PRICE".
-        4. Si no reconoces nada útil o ya terminaste el flujo, la acción es "FINISH".`;
+        4. Si no reconoces nada útil o ya terminaste el flujo, la hace es "FINISH".`;
 
         const completion = await groq.chat.completions.create({
             messages: [
